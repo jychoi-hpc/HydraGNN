@@ -7,5 +7,5 @@ from .load_data import (
     transform_raw_data_to_serialized,
     total_to_train_val_test_pkls,
 )
-from .serialized_dataset_loader import SerializedDataLoader
+from .serialized_dataset_loader import SerializedDataLoader, update_predicted_values
 from .raw_dataset_loader import RawDataLoader
