@@ -8,7 +8,7 @@ import hydragnn
 # Update each sample prior to loading.
 def md17_pre_transform(data):
     # Set descriptor as element type.
-    data.x = data.z.float()
+    data.x = data.z.float().view(-1, 1)
     # Only predict energy (index 0 of 2 properties) for this run.
     data.y = data.energy
     hydragnn.preprocess.update_predicted_values(
@@ -41,7 +41,7 @@ arch_config = config["NeuralNetwork"]["Architecture"]
 var_config = config["NeuralNetwork"]["Variables_of_interest"]
 
 # Set the details of outputs of interest.
-arch_config["output_dim"] = [0]
+arch_config["output_dim"] = [1]
 arch_config["output_type"] = ["graph"]
 
 # Always initialize for multi-rank training.
