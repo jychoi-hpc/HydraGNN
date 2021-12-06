@@ -61,13 +61,13 @@ train_loader = torch_geometric.loader.DataLoader(dataset, batch_size=32, shuffle
 config["NeuralNetwork"]["Architecture"] = arch_config
 config["NeuralNetwork"]["Variables_of_interest"] = var_config
 
-input_dim = len(config["NeuralNetwork"]["Variables_of_interest"]["input_node_features"])
-model = hydragnn.models.create(
-    model_type=arch_config["model_type"],
-    input_dim=input_dim,
-    dataset=dataset,
-    config=arch_config,
-    verbosity_level=verbosity,
+config["NeuralNetwork"]["Architecture"]["input_dim"] = len(
+    config["NeuralNetwork"]["Variables_of_interest"]["input_node_features"]
+)
+model = hydragnn.models.create_model_config(
+    config=config["NeuralNetwork"]["Architecture"],
+    num_nodes=train_loader.dataset[0].num_nodes,
+    verbosity=verbosity,
 )
 
 learning_rate = config["NeuralNetwork"]["Training"]["learning_rate"]
