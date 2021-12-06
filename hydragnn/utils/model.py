@@ -72,3 +72,12 @@ def calculate_PNA_degree(dataset: [Data], max_neighbours):
         d = degree(data.edge_index[1], num_nodes=data.num_nodes, dtype=torch.long)
         deg += torch.bincount(d, minlength=deg.numel())
     return deg
+
+
+def calculate_PNA_degree_config(dataset: [Data], config: dict):
+    max_neigh = config["NeuralNetwork"]["Architecture"]["max_neighbours"]
+    if config["NeuralNetwork"]["Architecture"]["model_type"] == "PNA":
+        deg = calculate_PNA_degree(dataset, max_neigh)
+    else:
+        deg = None
+    return deg

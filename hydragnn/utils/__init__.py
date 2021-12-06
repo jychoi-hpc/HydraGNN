@@ -14,6 +14,8 @@ from .model import (
     get_summary_writer,
     load_existing_model,
     load_existing_model_config,
+    calculate_PNA_degree,
+    calculate_PNA_degree_config,
 )
 from .time_utils import Timer, print_timers
 from .config_utils import (

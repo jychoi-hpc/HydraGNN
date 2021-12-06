@@ -27,7 +27,7 @@ from hydragnn.utils.model import (
     save_model,
     get_summary_writer,
     load_existing_model_config,
-    calculate_PNA_degree,
+    calculate_PNA_degree_config,
 )
 from hydragnn.utils.print_utils import print_distributed
 from hydragnn.utils.time_utils import print_timers
@@ -79,10 +79,7 @@ def _(config: dict):
         config["NeuralNetwork"]["Variables_of_interest"]["input_node_features"]
     )
     max_neigh = config["NeuralNetwork"]["Architecture"]["max_neighbours"]
-    if config["NeuralNetwork"]["Architecture"]["model_type"] == "PNA":
-        deg = calculate_PNA_degree(train_loader.dataset, max_neigh)
-    else:
-        deg = None
+    deg = calculate_PNA_degree_config(train_loader.dataset, config)
     model = create_model_config(
         config=config["NeuralNetwork"]["Architecture"],
         num_nodes=train_loader.dataset[0].num_nodes,
