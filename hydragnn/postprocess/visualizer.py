@@ -113,7 +113,8 @@ class Visualizer:
         y_label=None,
         xylim_equal=False,
     ):
-        ax.scatter(x, y, s, c, marker)
+        ax.scatter(x, y, s=s, edgecolor="b", marker=marker, facecolor="none")
+
         ax.set_title(title)
         ax.set_xlabel(x_label)
         ax.set_ylabel(y_label)
@@ -123,6 +124,8 @@ class Visualizer:
             maximum = np.max((ax.get_xlim(), ax.get_ylim()))
             ax.set_xlim(minimum, maximum)
             ax.set_ylim(minimum, maximum)
+
+        self.add_identity(ax, color="r", ls="--")
 
     def create_plot_global_analysis(
         self, varname, true_values, predicted_values, save_plot=True
@@ -550,14 +553,26 @@ class Visualizer:
                 fig.savefig(f"./logs/{self.model_with_config_name}/" + varname + ".png")
             plt.close()
 
+    def add_identity(self, axes, *line_args, **line_kwargs):
+        (identity,) = axes.plot([], [], *line_args, **line_kwargs)
+
+        def callback(axes):
+            low_x, high_x = axes.get_xlim()
+            low_y, high_y = axes.get_ylim()
+            low = max(low_x, low_y)
+            high = min(high_x, high_y)
+            identity.set_data([low, high], [low, high])
+
+        callback(axes)
+        axes.callbacks.connect("xlim_changed", callback)
+        axes.callbacks.connect("ylim_changed", callback)
+        return axes
+
     def plot_history(
         self,
         total_loss_train,
         total_loss_val,
         total_loss_test,
-        task_loss_train_sum,
-        task_loss_val_sum,
-        task_loss_test_sum,
         task_loss_train,
         task_loss_val,
         task_loss_test,
@@ -571,9 +586,6 @@ class Visualizer:
                 total_loss_train,
                 total_loss_val,
                 total_loss_test,
-                task_loss_train_sum,
-                task_loss_val_sum,
-                task_loss_test_sum,
                 task_loss_train,
                 task_loss_val,
                 task_loss_test,
@@ -583,11 +595,11 @@ class Visualizer:
             fhist,
         )
         fhist.close()
-        num_tasks = len(task_loss_train_sum[0])
+        num_tasks = len(task_loss_train[0])
         if num_tasks > 0:
-            task_loss_train_sum = np.array(task_loss_train_sum)
-            task_loss_val_sum = np.array(task_loss_val_sum)
-            task_loss_test_sum = np.array(task_loss_test_sum)
+            task_loss_train = np.array(task_loss_train)
+            task_loss_val = np.array(task_loss_val)
+            task_loss_test = np.array(task_loss_test)
             nrow = 2
         fig, axs = plt.subplots(nrow, num_tasks, figsize=(16, 6 * nrow))
         axs = axs.flatten()
@@ -601,17 +613,17 @@ class Visualizer:
         ax.legend()
         for iext in range(1, num_tasks):
             axs[iext].axis("off")
-        for ivar in range(task_loss_train_sum.shape[1]):
+        for ivar in range(task_loss_train.shape[1]):
             ax = axs[num_tasks + ivar]
-            ax.plot(task_loss_train_sum[:, ivar], label="train")
-            ax.plot(task_loss_val_sum[:, ivar], label="validation")
-            ax.plot(task_loss_test_sum[:, ivar], "--", label="test")
+            ax.plot(task_loss_train[:, ivar], label="train")
+            ax.plot(task_loss_val[:, ivar], label="validation")
+            ax.plot(task_loss_test[:, ivar], "--", label="test")
             ax.set_title(task_names[ivar] + ", {:.4f}".format(task_weights[ivar]))
             ax.set_xlabel("Epochs")
             ax.set_yscale("log")
             if ivar == 0:
                 ax.legend()
-        for iext in range(num_tasks + task_loss_train_sum.shape[1], axs.size):
+        for iext in range(num_tasks + task_loss_train.shape[1], axs.size):
             axs[iext].axis("off")
         plt.subplots_adjust(
             left=0.1, bottom=0.08, right=0.98, top=0.9, wspace=0.25, hspace=0.3

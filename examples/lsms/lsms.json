@@ -1,10 +1,10 @@
 {
     "Verbosity": {
-        "level": 0
+        "level": 2
     },
     "Dataset": {
         "name": "FePt_32atoms",
-        "path": {"raw": {"total": "FePt"}},
+        "path": {"total": "FePt"},
         "format": "LSMS",
         "node_features": {
             "name": ["num_of_protons","charge_density", "magnetic_moment"],
@@ -12,7 +12,7 @@
             "column_index": [0,5,6]
         },
         "graph_features":{
-            "name": [ "free_energy"],
+            "name": [ "free_energy_scaled_num_nodes"],
             "dim": [1],
             "column_index": [0]
         }
@@ -33,14 +33,15 @@
                 },
                 "node": {
                     "num_headlayers": 2,
-                    "dim_headlayers": [50,25]
+                    "dim_headlayers": [50,25],
+                    "type": "mlp"
                 }
             },
             "task_weights": [1.0, 1.0, 1.0]
         },
         "Variables_of_interest": {
             "input_node_features": [0],
-            "output_names": ["free_energy","charge_density", "magnetic_moment"],
+            "output_names": ["free_energy_scaled_num_nodes","charge_density", "magnetic_moment"],
             "output_index": [0, 1, 2],
             "type": ["graph","node","node"],
             "denormalize_output": true

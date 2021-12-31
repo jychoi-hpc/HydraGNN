@@ -56,13 +56,15 @@ class RawDataLoader:
         """
         self.dataset_list = []
         self.serial_data_name_list = []
+        self.node_feature_name = config["node_features"]["name"]
         self.node_feature_dim = config["node_features"]["dim"]
         self.node_feature_col = config["node_features"]["column_index"]
+        self.graph_feature_name = config["graph_features"]["name"]
         self.graph_feature_dim = config["graph_features"]["dim"]
         self.graph_feature_col = config["graph_features"]["column_index"]
         self.raw_dataset_name = config["name"]
         self.data_format = config["format"]
-        self.path_dictionary = config["path"]["raw"]
+        self.path_dictionary = config["path"]
 
     def load_raw_data(self):
         """Loads the raw files from specified path, performs the transformation to Data objects and normalization of values.
@@ -98,6 +100,9 @@ class RawDataLoader:
             if self.data_format == "LSMS":
                 for idx, data_object in enumerate(dataset):
                     dataset[idx] = self.__charge_density_update_for_LSMS(data_object)
+
+            # scaled features by number of nodes
+            dataset = self.__scale_features_by_num_nodes(dataset)
 
             if dataset_type == "total":
                 serial_data_name = self.raw_dataset_name + ".pkl"
@@ -176,11 +181,34 @@ class RawDataLoader:
         Data
             Data object representing structure of a graph sample.
         """
-        num_of_protons = data_object.x[0]
-        charge_density = data_object.x[1]
+        num_of_protons = data_object.x[:, 0]
+        charge_density = data_object.x[:, 1]
         charge_density -= num_of_protons
-        data_object.x[1] = charge_density
+        data_object.x[:, 1] = charge_density
         return data_object
+
+    def __scale_features_by_num_nodes(self, dataset):
+        """Calculate [**]_scaled_num_nodes"""
+        scaled_graph_feature_index = [
+            i
+            for i in range(len(self.graph_feature_name))
+            if "_scaled_num_nodes" in self.graph_feature_name[i]
+        ]
+        scaled_node_feature_index = [
+            i
+            for i in range(len(self.node_feature_name))
+            if "_scaled_num_nodes" in self.node_feature_name[i]
+        ]
+
+        for idx, data_object in enumerate(dataset):
+            dataset[idx].y[scaled_graph_feature_index] = (
+                dataset[idx].y[scaled_graph_feature_index] / data_object.num_nodes
+            )
+            dataset[idx].x[:, scaled_node_feature_index] = (
+                dataset[idx].x[:, scaled_node_feature_index] / data_object.num_nodes
+            )
+
+        return dataset
 
     def __normalize_dataset(self):
 

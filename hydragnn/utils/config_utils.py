@@ -9,6 +9,7 @@
 # SPDX-License-Identifier: BSD-3-Clause                                      #
 ##############################################################################
 import pickle
+import os
 
 
 def update_config_NN_outputs(config, graph_size_variable):
@@ -42,48 +43,58 @@ def update_config_NN_outputs(config, graph_size_variable):
     return config
 
 
+def normalize_output_config(config):
+    var_config = config["NeuralNetwork"]["Variables_of_interest"]
+    if "denormalize_output" in var_config and var_config["denormalize_output"]:
+        ###loading min/max values from input data file. Only one path is needed
+        if list(config["Dataset"]["path"].values())[0].endswith(".pkl"):
+            dataset_path = list(config["Dataset"]["path"].values())[0]
+        else:
+            if "total" in config["Dataset"]["path"].keys():
+                dataset_path = f"{os.environ['SERIALIZED_DATA_PATH']}/serialized_dataset/{config['Dataset']['name']}.pkl"
+            else:
+                dataset_path = f"{os.environ['SERIALIZED_DATA_PATH']}/serialized_dataset/{config['Dataset']['name']}_train.pkl"
+        var_config = update_config_minmax(dataset_path, var_config)
+    else:
+        var_config["denormalize_output"] = False
+
+    config["NeuralNetwork"]["Variables_of_interest"] = var_config
+    return config
+
+
 def update_config_minmax(dataset_path, config):
     """load minimum and maximum values from dataset_path, if need denormalize,"""
     with open(dataset_path, "rb") as f:
         node_minmax = pickle.load(f)
         graph_minmax = pickle.load(f)
-    config["NeuralNetwork"]["Variables_of_interest"]["x_minmax"] = []
-    config["NeuralNetwork"]["Variables_of_interest"]["y_minmax"] = []
-    feature_indices = [
-        i
-        for i in config["NeuralNetwork"]["Variables_of_interest"]["input_node_features"]
-    ]
+    config["x_minmax"] = []
+    config["y_minmax"] = []
+    feature_indices = [i for i in config["input_node_features"]]
     for item in feature_indices:
-        config["NeuralNetwork"]["Variables_of_interest"]["x_minmax"].append(
-            node_minmax[:, item].tolist()
-        )
-    output_type = config["NeuralNetwork"]["Variables_of_interest"]["type"]
-    output_index = config["NeuralNetwork"]["Variables_of_interest"]["output_index"]
+        config["x_minmax"].append(node_minmax[:, item].tolist())
+    output_type = config["type"]
+    output_index = config["output_index"]
     for item in range(len(output_type)):
         if output_type[item] == "graph":
-            config["NeuralNetwork"]["Variables_of_interest"]["y_minmax"].append(
-                graph_minmax[:, output_index[item]].tolist()
-            )
+            config["y_minmax"].append(graph_minmax[:, output_index[item]].tolist())
         elif output_type[item] == "node":
-            config["NeuralNetwork"]["Variables_of_interest"]["y_minmax"].append(
-                node_minmax[:, output_index[item]].tolist()
-            )
+            config["y_minmax"].append(node_minmax[:, output_index[item]].tolist())
         else:
             raise ValueError("Unknown output type", output_type[item])
     return config
 
 
-def get_model_output_name_config(model, config):
+def get_log_name_config(config):
     return (
-        model.__str__()
+        config["NeuralNetwork"]["Architecture"]["model_type"]
         + "-r-"
         + str(config["NeuralNetwork"]["Architecture"]["radius"])
         + "-mnnn-"
         + str(config["NeuralNetwork"]["Architecture"]["max_neighbours"])
         + "-ncl-"
-        + str(model.num_conv_layers)
+        + str(config["NeuralNetwork"]["Architecture"]["num_conv_layers"])
         + "-hd-"
-        + str(model.hidden_dim)
+        + str(config["NeuralNetwork"]["Architecture"]["hidden_dim"])
         + "-ne-"
         + str(config["NeuralNetwork"]["Training"]["num_epoch"])
         + "-lr-"

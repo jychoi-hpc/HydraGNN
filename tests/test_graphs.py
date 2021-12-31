@@ -17,10 +17,8 @@ import shutil
 
 import hydragnn, tests
 
-
-@pytest.mark.parametrize("model_type", ["PNA", "GIN", "GAT", "MFC", "CGCNN"])
-@pytest.mark.parametrize("ci_input", ["ci.json", "ci_multihead.json"])
-def pytest_train_model(model_type, ci_input, overwrite_data=False):
+# Main unit test function called by pytest wrappers.
+def unittest_train_model(model_type, ci_input, use_lengths, overwrite_data=False):
 
     world_size, rank = hydragnn.utils.get_comm_size_and_rank()
 
@@ -37,15 +35,13 @@ def pytest_train_model(model_type, ci_input, overwrite_data=False):
     "Dataset": {
        ...
        "path": {
-           "raw": {
                "train": "serialized_dataset/unit_test_singlehead_train.pkl",
                "test": "serialized_dataset/unit_test_singlehead_test.pkl",
                "validate": "serialized_dataset/unit_test_singlehead_validate.pkl"}
-                },
        ...
     """
     # use pkl files if exist by default
-    for dataset_name in config["Dataset"]["path"]["raw"].keys():
+    for dataset_name in config["Dataset"]["path"].keys():
         if dataset_name == "total":
             pkl_file = (
                 os.environ["SERIALIZED_DATA_PATH"]
@@ -63,22 +59,26 @@ def pytest_train_model(model_type, ci_input, overwrite_data=False):
                 + ".pkl"
             )
         if os.path.exists(pkl_file):
-            config["Dataset"]["path"]["raw"][dataset_name] = pkl_file
+            config["Dataset"]["path"][dataset_name] = pkl_file
 
     # In the unit test runs, it is found MFC favors graph-level features over node-level features, compared with other models;
     # hence here we decrease the loss weight coefficient for graph-level head in MFC.
     if model_type == "MFC" and ci_input == "ci_multihead.json":
         config["NeuralNetwork"]["Architecture"]["task_weights"][0] = 2
 
+    # Only run with edge lengths for models that support them.
+    if use_lengths:
+        config["NeuralNetwork"]["Architecture"]["edge_features"] = ["lengths"]
+
     if rank == 0:
         num_samples_tot = 500
         # check if serialized pickle files or folders for raw files provided
         pkl_input = False
-        if list(config["Dataset"]["path"]["raw"].values())[0].endswith(".pkl"):
+        if list(config["Dataset"]["path"].values())[0].endswith(".pkl"):
             pkl_input = True
         # only generate new datasets, if not pkl
         if not pkl_input:
-            for dataset_name, data_path in config["Dataset"]["path"]["raw"].items():
+            for dataset_name, data_path in config["Dataset"]["path"].items():
                 if overwrite_data:
                     shutil.rmtree(data_path)
                 if not os.path.exists(data_path):
@@ -109,14 +109,13 @@ def pytest_train_model(model_type, ci_input, overwrite_data=False):
 
     # Since the config file uses PNA already, test the file overload here.
     # All the other models need to use the locally modified dictionary.
-    if model_type == "PNA":
+    if model_type == "PNA" and not use_lengths:
         hydragnn.run_training(config_file)
     else:
         hydragnn.run_training(config)
 
     (
         error,
-        error_sumofnodes_task,
         error_rmse_task,
         true_values,
         predicted_values,
@@ -125,7 +124,7 @@ def pytest_train_model(model_type, ci_input, overwrite_data=False):
     # Set RMSE and sample error thresholds
     thresholds = {
         "PNA": [0.10, 0.25],
-        "MFC": [0.10, 0.25],
+        "MFC": [0.10, 0.50],
         "GIN": [0.15, 0.90],
         "GAT": [0.80, 0.95],
         # fixme: error for cgcnn will be reduced after edge attributes being implemented
@@ -134,17 +133,6 @@ def pytest_train_model(model_type, ci_input, overwrite_data=False):
     verbosity = 2
 
     for ihead in range(len(true_values)):
-        error_head_sum = error_sumofnodes_task[ihead] / len(true_values[ihead][0])
-        error_str = (
-            str("{:.6f}".format(error_head_sum))
-            + " < "
-            + str(thresholds[model_type][0])
-        )
-        hydragnn.utils.print_distributed(verbosity, "head sum: " + error_str)
-        assert (
-            error_head_sum < thresholds[model_type][0]
-        ), "RMSE checking failed for sum of head " + str(ihead)
-
         error_head_rmse = error_rmse_task[ihead]
         error_str = (
             str("{:.6f}".format(error_head_rmse))
@@ -187,3 +175,16 @@ def pytest_train_model(model_type, ci_input, overwrite_data=False):
     error_str = str("{:.6f}".format(error)) + " < " + str(thresholds[model_type][0])
     hydragnn.utils.print_distributed(verbosity, "total: " + error_str)
     assert error < thresholds[model_type][0], "Total RMSE checking failed!" + str(error)
+
+
+# Test across all models with both single/multihead
+@pytest.mark.parametrize("model_type", ["GIN", "GAT", "MFC", "PNA", "CGCNN"])
+@pytest.mark.parametrize("ci_input", ["ci.json", "ci_multihead.json"])
+def pytest_train_model(model_type, ci_input, overwrite_data=False):
+    unittest_train_model(model_type, ci_input, False, overwrite_data)
+
+
+# Test only models
+@pytest.mark.parametrize("model_type", ["PNA", "CGCNN"])
+def pytest_train_model_lengths(model_type, overwrite_data=False):
+    unittest_train_model(model_type, "ci.json", True, overwrite_data)

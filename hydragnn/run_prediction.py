@@ -17,12 +17,15 @@ import torch
 from hydragnn.preprocess.load_data import dataset_loading_and_splitting
 from hydragnn.preprocess.utils import check_if_graph_size_constant
 from hydragnn.utils.distributed import setup_ddp
+from hydragnn.utils.model import load_existing_model
 from hydragnn.utils.time_utils import print_timers
 from hydragnn.utils.config_utils import (
     update_config_NN_outputs,
-    get_model_output_name_config,
+    normalize_output_config,
+    get_log_name_config,
 )
-from hydragnn.models.create import create
+from hydragnn.utils.model import calculate_PNA_degree
+from hydragnn.models.create import create_model_config
 from hydragnn.train.train_validate_test import test
 from hydragnn.postprocess.postprocess import output_denormalize
 
@@ -53,36 +56,36 @@ def _(config: dict):
     world_size, world_rank = setup_ddp()
 
     verbosity = config["Verbosity"]["level"]
-    train_loader, val_loader, test_loader = dataset_loading_and_splitting(
-        config=config,
-        chosen_dataset_option=config["Dataset"]["name"],
-    )
+    train_loader, val_loader, test_loader = dataset_loading_and_splitting(config=config)
 
     graph_size_variable = check_if_graph_size_constant(
         train_loader, val_loader, test_loader
     )
     config = update_config_NN_outputs(config, graph_size_variable)
 
-    model = create(
-        model_type=config["NeuralNetwork"]["Architecture"]["model_type"],
-        input_dim=len(
-            config["NeuralNetwork"]["Variables_of_interest"]["input_node_features"]
-        ),
-        dataset=train_loader.dataset,
+    config = normalize_output_config(config)
+
+    config["NeuralNetwork"]["Architecture"]["input_dim"] = len(
+        config["NeuralNetwork"]["Variables_of_interest"]["input_node_features"]
+    )
+    max_neigh = config["NeuralNetwork"]["Architecture"]["max_neighbours"]
+    if config["NeuralNetwork"]["Architecture"]["model_type"] == "PNA":
+        deg = calculate_PNA_degree(train_loader.dataset, max_neigh)
+    else:
+        deg = None
+    model = create_model_config(
         config=config["NeuralNetwork"]["Architecture"],
-        verbosity_level=config["Verbosity"]["level"],
+        num_nodes=train_loader.dataset[0].num_nodes,
+        max_neighbours=max_neigh,
+        pna_deg=deg,
+        verbosity=config["Verbosity"]["level"],
     )
 
-    model_with_config_name = get_model_output_name_config(model, config)
-    state_dict = torch.load(
-        "./logs/" + model_with_config_name + "/" + model_with_config_name + ".pk",
-        map_location="cpu",
-    )
-    model.load_state_dict(state_dict)
+    log_name = get_log_name_config(config)
+    load_existing_model(model, log_name)
 
     (
         error,
-        error_sumofnodes_task,
         error_rmse_task,
         true_values,
         predicted_values,
@@ -96,4 +99,4 @@ def _(config: dict):
             predicted_values,
         )
 
-    return error, error_sumofnodes_task, error_rmse_task, true_values, predicted_values
+    return error, error_rmse_task, true_values, predicted_values

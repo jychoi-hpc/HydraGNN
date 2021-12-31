@@ -25,12 +25,12 @@ class Base(Module):
         output_dim: list,
         output_type: list,
         config_heads: {},
-        num_nodes: int,
         ilossweights_hyperp: int,
         loss_weights: list,
         ilossweights_nll: int,
         dropout: float = 0.25,
         num_conv_layers: int = 16,
+        num_nodes: int = None,
     ):
         super().__init__()
         self.input_dim = input_dim
@@ -71,6 +71,15 @@ class Base(Module):
                 self.loss_weights = loss_weights
             weightabssum = sum(abs(number) for number in self.loss_weights)
             self.loss_weights = [iw / weightabssum for iw in self.loss_weights]
+
+        # Condition to pass edge_attr through forward propagation.
+        self.use_edge_attr = False
+        if (
+            hasattr(self, "edge_dim")
+            and self.edge_dim is not None
+            and self.edge_dim > 0
+        ):
+            self.use_edge_attr = True
 
         self._init_conv()
         self._init_node_conv()
@@ -155,6 +164,9 @@ class Base(Module):
                 self.node_NN_type = self.config_heads["node"]["type"]
                 head_NN = ModuleList()
                 if self.node_NN_type == "mlp" or self.node_NN_type == "mlp_per_node":
+                    assert (
+                        self.num_nodes is not None
+                    ), "num_nodes must be positive integer for MLP"
                     # """if different graphs in the dataset have different size, one MLP is shared across all nodes """
                     head_NN = MLPNode(
                         self.hidden_dim,
@@ -192,12 +204,23 @@ class Base(Module):
             data.edge_index,
             data.batch,
         )
+        use_edge_attr = False
+        if (data.edge_attr is not None) and (self.use_edge_attr):
+            use_edge_attr = True
+
         ### encoder part ####
-        for conv, batch_norm in zip(self.convs, self.batch_norms):
-            x = F.relu(batch_norm(conv(x=x, edge_index=edge_index)))
+        if use_edge_attr:
+            for conv, batch_norm in zip(self.convs, self.batch_norms):
+                c = conv(x=x, edge_index=edge_index, edge_attr=data.edge_attr)
+                x = F.relu(batch_norm(c))
+        else:
+            for conv, batch_norm in zip(self.convs, self.batch_norms):
+                c = conv(x=x, edge_index=edge_index)
+                x = F.relu(batch_norm(c))
+
         #### multi-head decoder part####
         # shared dense layers for graph level output
-        x_graph = global_mean_pool(x, batch)
+        x_graph = global_mean_pool(x, batch.to(x.device))
         outputs = []
         for head_dim, headloc, type_head in zip(
             self.head_dims, self.heads_NN, self.head_type
@@ -248,8 +271,7 @@ class Base(Module):
     def loss_hpweighted(self, pred, value, head_index):
         # weights for different tasks as hyper-parameters
         tot_loss = 0
-        tasks_rmseloss = []
-        tasks_nodes = []
+        tasks_rmse = []
         for ihead in range(self.num_heads):
             head_pre = pred[ihead]
             pred_shape = head_pre.shape
@@ -261,13 +283,9 @@ class Base(Module):
             tot_loss += (
                 torch.sqrt(F.mse_loss(head_pre, head_val)) * self.loss_weights[ihead]
             )
-            tasks_nodes.append(torch.sqrt(F.mse_loss(head_pre, head_val)))
-            # loss of summation across nodes/atoms
-            tasks_rmseloss.append(
-                torch.sqrt(F.mse_loss(torch.sum(head_pre, 1), torch.sum(head_val, 1)))
-            )
+            tasks_rmse.append(torch.sqrt(F.mse_loss(head_pre, head_val)))
 
-        return tot_loss, tasks_rmseloss, tasks_nodes
+        return tot_loss, tasks_rmse
 
     def __str__(self):
         return "Base"
