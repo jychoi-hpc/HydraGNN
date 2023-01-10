@@ -90,12 +90,6 @@ def train_validate_test(
             iepoch=-1,
         )
 
-    # import ipdb; ipdb.set_trace()
-    # for data in train_loader:
-    #     print (data, data.num_graphs)
-    # import sys; sys.exit(0)
-
-
     profiler = Profiler("./logs/" + model_with_config_name)
     if "Profile" in config:
         profiler.setup(config["Profile"])
@@ -355,7 +349,6 @@ def train(
     model.train()
 
     use_distds = bool(int(os.getenv("HYDRAGNN_USE_DISTDS", "0")))
-    print ("use_distds", use_distds)
     if use_distds:
         loader.dataset.ddstore.epoch_begin()
     for data in iterate_tqdm(loader, verbosity, desc="Train"):
