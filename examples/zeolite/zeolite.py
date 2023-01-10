@@ -1,3 +1,8 @@
+import mpi4py
+
+mpi4py.rc.thread_level = "serialized"
+mpi4py.rc.threads = False
+
 import os, json
 import logging
 import sys
@@ -11,6 +16,7 @@ from hydragnn.utils.config_utils import get_log_name_config
 from hydragnn.preprocess.raw_dataset_loader import RawDataLoader
 from hydragnn.utils.model import print_model
 from hydragnn.utils.print_utils import iterate_tqdm, log
+from hydragnn.utils.distdataset import DistDataset
 
 import torch
 import torch.distributed as dist
@@ -22,7 +28,8 @@ def check_retainable_connections(data, edge_index):
     # C-C remove, Si-Si remove, Si-O remove O-O remove.
     assert edge_index < data.edge_index.shape[1], "Edge index exceeds total number of edges available"
 
-    if ( data.edge_index[0,edge_index] == 0.0 and data.edge_index[1,edge_index] != 0.0 ) or ( data.edge_index[1,edge_index] == 0.0 and data.edge_index[0,edge_index] != 0.0 ):
+    if ( data.edge_index[0,edge_index] == 0 and data.edge_index[1,edge_index] != 0 ) or \
+       ( data.edge_index[1,edge_index] == 0 and data.edge_index[0,edge_index] != 0 ):
         return True
     else:
         return False
@@ -55,7 +62,13 @@ if __name__ == "__main__":
         action="store_true",
         help="preprocess only. Adios or pickle saving and no train",
     )
+    parser.add_argument(
+        "--distds",
+        action="store_true",
+        help="distds dataset",
+    )
     parser.add_argument("--inputfile", help="input file", type=str, default="zeolite.json")
+    parser.add_argument("--sampling", help="sampling ratio", type=float, default=None)
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
         "--adios",
@@ -106,7 +119,7 @@ if __name__ == "__main__":
 
         ## each process saves its own data file
         loader = RawDataLoader(config["Dataset"], dist=True)
-        loader.load_raw_data()
+        loader.load_raw_data(sampling=args.sampling)
 
         ## Read total pkl and split (no graph object conversion)
         hydragnn.preprocess.total_to_train_val_test_pkls(config, isdist=True)
@@ -141,8 +154,8 @@ if __name__ == "__main__":
     if args.format == "adios":
         from hydragnn.utils.adiosdataset import AdiosDataset
 
-        info("Adios load")
-        trainset = AdiosDataset(fname_adios, "trainset", comm)
+        info("Adios load (distds: %r)"%(args.distds))
+        trainset = AdiosDataset(fname_adios, "trainset", comm, distds=args.distds)
         valset = AdiosDataset(fname_adios, "valset", comm)
         testset = AdiosDataset(fname_adios, "testset", comm)
         ## Set minmax read from bp file
@@ -152,12 +165,17 @@ if __name__ == "__main__":
         config["NeuralNetwork"]["Variables_of_interest"][
             "minmax_graph_feature"
         ] = trainset.minmax_graph_feature
+
+        if args.distds:
+            os.environ["HYDRAGNN_AGGR_BACKEND"] = "mpi"
+            os.environ["HYDRAGNN_USE_DISTDS"] = "1"
     elif args.format == "pickle":
         config["Dataset"]["path"] = {}
         ##set directory to load processed pickle files, train/validate/test
         for dataset_type in ["train", "validate", "test"]:
             raw_data_path = f"{os.environ['SERIALIZED_DATA_PATH']}/serialized_dataset/{config['Dataset']['name']}_{dataset_type}.pkl"
             config["Dataset"]["path"][dataset_type] = raw_data_path
+
         info("Pickle load")
         (
             trainset,
@@ -171,18 +189,27 @@ if __name__ == "__main__":
             for data in dataset:
                 remove_edges(data)
 
-        # FIXME: Use MPI to gather data. This is no good either. It can be a problem if data size is larger than MPI capacity.
-        info("Gather dataset")
-        t0 = time.time()
-        comm = MPI.COMM_WORLD
-        trainset_all = comm.allgather(trainset)
-        valset_all = comm.allgather(valset)
-        testset_all = comm.allgather(testset)
-        trainset = flatten(trainset_all)
-        valset = flatten(valset_all)
-        testset = flatten(testset_all)
-        t1 = time.time()
-        log ("Time:", t1-t0)
+        if args.distds:
+            # (2023/01) FIXME: WIP. not working now
+            # trainset = DistDataset(trainset, "trainset")
+            # valset = DistDataset(valset, "valset")
+            # testset = DistDataset(testset, "testset")
+            # os.environ["HYDRAGNN_AGGR_BACKEND"] = "mpi"
+            # os.environ["HYDRAGNN_USE_DISTDS"] = "1"
+            pass
+        else:
+            # FIXME: Use MPI to gather data. This is no good either. It can be a problem if data size is larger than MPI capacity.
+            info("Gather dataset")
+            t0 = time.time()
+            comm = MPI.COMM_WORLD
+            trainset_all = comm.allgather(trainset)
+            valset_all = comm.allgather(valset)
+            testset_all = comm.allgather(testset)
+            trainset = flatten(trainset_all)
+            valset = flatten(valset_all)
+            testset = flatten(testset_all)
+            t1 = time.time()
+            log ("Time:", t1-t0)
     else:
         raise ValueError("Unknown data format: %d" % args.format)
 
@@ -191,15 +218,18 @@ if __name__ == "__main__":
         % (len(trainset), len(valset), len(testset))
     )
 
+    info("create_dataloaders")
     (train_loader, val_loader, test_loader,) = hydragnn.preprocess.create_dataloaders(
         trainset, valset, testset, config["NeuralNetwork"]["Training"]["batch_size"]
     )
     timer.stop()
 
+    info("update_config")
     config = hydragnn.utils.update_config(config, train_loader, val_loader, test_loader)
     config["NeuralNetwork"]["Variables_of_interest"].pop("minmax_node_feature", None)
     config["NeuralNetwork"]["Variables_of_interest"].pop("minmax_graph_feature", None)
 
+    info("create_model_config")
     verbosity = config["Verbosity"]["level"]
     model = hydragnn.models.create_model_config(
         config=config["NeuralNetwork"],

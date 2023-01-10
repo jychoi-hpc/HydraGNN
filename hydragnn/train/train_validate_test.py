@@ -107,7 +107,10 @@ def train_validate_test(
             train_loss, train_taskserr = train(
                 train_loader, model, optimizer, verbosity, profiler=prof
             )
-        val_loss, val_taskserr = validate(val_loader, model, verbosity)
+
+        val_loss, val_taskserr = validate(
+            val_loader, model, verbosity, reduce_ranks=True
+        )
         test_loss, test_taskserr, true_values, predicted_values = test(
             test_loader,
             model,
@@ -263,11 +266,30 @@ def get_head_indices_node_or_mixed(model, data):
 
 
 @torch.no_grad()
-def reduce_values_ranks(local_tensor):
+def reduce_values_ranks_dist(local_tensor):
     if dist.get_world_size() > 1:
         dist.all_reduce(local_tensor, op=dist.ReduceOp.SUM)
         local_tensor = local_tensor / dist.get_world_size()
     return local_tensor
+
+
+def reduce_values_ranks_mpi(local_tensor):
+    if dist.get_world_size() > 1:
+        from mpi4py import MPI
+
+        _local_tensor = MPI.COMM_WORLD.allreduce(
+            local_tensor.detach().cpu().numpy(), op=MPI.SUM
+        )
+        _local_tensor = _local_tensor / dist.get_world_size()
+    return torch.tensor(_local_tensor)
+
+
+def reduce_values_ranks(local_tensor):
+    backend = os.getenv("HYDRAGNN_AGGR_BACKEND", "torch")
+    if backend == "mpi":
+        return reduce_values_ranks_mpi(local_tensor)
+    else:
+        return reduce_values_ranks_dist(local_tensor)
 
 
 @torch.no_grad()
@@ -326,7 +348,12 @@ def train(
     num_samples_local = 0
     model.train()
 
+    use_distds = bool(int(os.getenv("HYDRAGNN_USE_DISTDS", "0")))
+    if use_distds:
+        loader.dataset.ddstore.epoch_begin()
     for data in iterate_tqdm(loader, verbosity, desc="Train"):
+        if use_distds:
+            loader.dataset.ddstore.epoch_end()
         with record_function("zero_grad"):
             opt.zero_grad()
         with record_function("get_head_indices"):
@@ -346,6 +373,10 @@ def train(
             num_samples_local += data.num_graphs
             for itask in range(len(tasks_loss)):
                 tasks_error[itask] += tasks_loss[itask] * data.num_graphs
+        if use_distds:
+            loader.dataset.ddstore.epoch_begin()
+    if use_distds:
+        loader.dataset.ddstore.epoch_end()
 
     train_error = total_error / num_samples_local
     tasks_error = tasks_error / num_samples_local

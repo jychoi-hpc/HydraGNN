@@ -16,7 +16,16 @@ import torch_geometric.data
 import torch
 
 from multiprocessing.shared_memory import SharedMemory
-from multiprocessing.managers import SharedMemoryManager
+
+try:
+    import pyddstore as dds
+except ImportError:
+    pass
+
+
+def nsplit(a, n):
+    k, m = divmod(len(a), n)
+    return (a[i * k + min(i, m) : (i + 1) * k + min(i + 1, m)] for i in range(n))
 
 
 class AdiosWriter:
@@ -182,7 +191,15 @@ class AdiosDataset(torch.utils.data.Dataset):
     """Adios dataset class"""
 
     def __init__(
-        self, filename, label, comm, preload=True, shmem=False, enable_cache=True
+        self,
+        filename,
+        label,
+        comm,
+        preload=False,
+        shmem=False,
+        enable_cache=False,
+        distds=False,
+        distds_ncopy=1,
     ):
         """
         Parameters
@@ -199,23 +216,26 @@ class AdiosDataset(torch.utils.data.Dataset):
             Option to use shmem to share data between processes in the same node
         enable_cache: bool, optional
             Option to cache data object which was already read
+        distds: bool, optional
+            Option to use Distributed Data Store
         """
         t0 = time.time()
         self.filename = filename
         self.label = label
         self.comm = comm
         self.rank = self.comm.Get_rank()
+        self.comm_size = self.comm.Get_size()
 
         self.nrank_per_node = self.comm.Get_size()
         if os.getenv("OMPI_COMM_WORLD_LOCAL_SIZE"):
             ## Summit
             self.nrank_per_node = int(os.environ["OMPI_COMM_WORLD_LOCAL_SIZE"])
-        if os.getenv("SLURM_NTASKS_PER_NODE"):
+        elif os.getenv("SLURM_NTASKS_PER_NODE"):
             ## Perlmutter
             self.nrank_per_node = int(os.environ["SLURM_NTASKS_PER_NODE"])
-
-        self.local_rank = self.rank % self.nrank_per_node
-        log("local_rank", self.local_rank)
+        elif os.getenv("SLURM_TASKS_PER_NODE"):
+            ## Crusher
+            self.nrank_per_node = int(os.environ["SLURM_TASKS_PER_NODE"].split("(")[0])
 
         self.data = dict()
         self.preload = preload
@@ -230,11 +250,17 @@ class AdiosDataset(torch.utils.data.Dataset):
             self.local_comm = self.comm.Split(
                 self.rank // self.nrank_per_node, self.rank
             )
+            self.local_rank = self.local_comm.Get_rank()
+            log("local_rank", self.local_rank)
 
         self.enable_cache = enable_cache
         self.cache = dict()
+        self.ddstore = None
+        self.distds = distds
+        self.distds_ncopy = distds_ncopy
+        if self.distds:
+            self.ddstore = dds.PyDDStore(comm)
         log("Adios reading:", self.filename)
-
         with ad2.open(self.filename, "r", MPI.COMM_SELF) as f:
             self.vars = f.available_variables()
             self.attrs = f.available_attributes()
@@ -292,7 +318,7 @@ class AdiosDataset(torch.utils.data.Dataset):
                     else:
                         name = None
                         name = self.local_comm.bcast(name, root=0)
-                        self.shm[k] = SharedMemory(name=name)
+                        self.shm[k] = SharedMemory(name=name, create=False)
 
                         shape = self.vars["%s/%s" % (self.label, k)]["Shape"]
                         ishape = [int(x.strip(",")) for x in shape.strip().split()]
@@ -311,7 +337,42 @@ class AdiosDataset(torch.utils.data.Dataset):
 
                         arr = np.ndarray(ishape, dtype=dtype, buffer=self.shm[k].buf)
                         self.data[k] = arr
+                elif self.distds:
+                    ## Calculate local portion
+                    shape = self.vars["%s/%s" % (self.label, k)]["Shape"]
+                    ishape = [int(x.strip(",")) for x in shape.strip().split()]
+                    start = [
+                        0,
+                    ] * len(ishape)
+                    count = ishape
+                    vdim = self.variable_dim[k]
 
+                    _comm_size = self.comm_size // self.distds_ncopy
+                    _rank = self.rank % (self.comm_size // self.distds_ncopy)
+                    rx = list(nsplit(self.variable_count[k], _comm_size))
+                    start[vdim] = sum([sum(x) for x in rx[:_rank]])
+                    count[vdim] = sum(rx[_rank])
+
+                    # Read only local portion
+                    vname = "%s/%s" % (label, k)
+                    self.data[k] = f.read(vname, start, count)
+                    if vdim > 0:
+                        self.data[k] = np.moveaxis(self.data[k], vdim, 0)
+                        self.data[k] = np.ascontiguousarray(self.data[k])
+                    _group_id = self.rank // (self.comm_size // self.distds_ncopy)
+                    self.ddstore.add(vname, self.data[k], _group_id)
+                    log(
+                        "DDStore add:",
+                        (
+                            vname,
+                            start,
+                            count,
+                            vdim,
+                            self.data[k].dtype,
+                            self.data[k].shape,
+                            self.data[k].sum(),
+                        ),
+                    )
             t2 = time.time()
             log("Adios reading time (sec): ", (t2 - t0))
         t1 = time.time()
@@ -356,6 +417,31 @@ class AdiosDataset(torch.utils.data.Dataset):
                     for n0, n1 in zip(start, count):
                         slice_list.append(slice(n0, n0 + n1))
                     val = self.data[k][tuple(slice_list)]
+                elif self.distds:
+                    vname = "%s/%s" % (self.label, k)
+                    vartype = self.vars["%s/%s" % (self.label, k)]["Type"]
+                    if vartype == "double":
+                        dtype = np.float64
+                    elif vartype == "float":
+                        dtype = np.float32
+                    elif vartype == "int32_t":
+                        dtype = np.int32
+                    elif vartype == "int64_t":
+                        dtype = np.int64
+                    else:
+                        raise ValueError(vartype)
+
+                    val = np.zeros(count, dtype=dtype)
+                    ## vdim should be the first dim for DDStore
+                    if vdim > 0:
+                        val = np.moveaxis(val, vdim, 0)
+                        val = np.ascontiguousarray(val)
+
+                    offset = start[vdim]
+                    self.ddstore.get(vname, val, offset)
+                    if vdim > 0:
+                        val = np.moveaxis(val, 0, vdim)
+                        val = np.ascontiguousarray(val)
                 else:
                     ## Reading data directly from disk
                     # log("getitem out-of-memory:", self.label, k, idx)
@@ -378,6 +464,8 @@ class AdiosDataset(torch.utils.data.Dataset):
                     self.shm[k].unlink()
 
     def __del__(self):
+        if self.distds:
+            self.ddstore.free()
         if not self.preload and not self.shmem:
             self.f.close()
         try:

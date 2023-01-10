@@ -108,7 +108,7 @@ class RawDataLoader:
             self.world_size = torch.distributed.get_world_size()
             self.rank = torch.distributed.get_rank()
 
-    def load_raw_data(self):
+    def load_raw_data(self, sampling=None):
         """Loads the raw files from specified path, performs the transformation to Data objects and normalization of values.
         After that the serialized data is stored to the serialized_dataset directory.
         """
@@ -133,6 +133,8 @@ class RawDataLoader:
                 ## Random shuffle filelist to avoid the same test/validation set
                 random.seed(43)
                 random.shuffle(filelist)
+                if sampling is not None:
+                    filelist = np.random.choice(filelist, int(len(filelist)*sampling))
 
                 x = torch.tensor(len(filelist), requires_grad=False).to(get_device())
                 y = x.clone().detach().requires_grad_(False)
@@ -141,7 +143,7 @@ class RawDataLoader:
                 filelist = list(nsplit(filelist, self.world_size))[self.rank]
                 log("local filelist", len(filelist))
 
-            for name in iterate_tqdm(filelist, verbosity_level=2):
+            for name in iterate_tqdm(filelist, verbosity_level=2, desc="Local files"):
                 if name == ".DS_Store":
                     continue
                 # if the directory contains file, iterate over them
@@ -161,6 +163,7 @@ class RawDataLoader:
                             )
                             if not isinstance(data_object, type(None)):
                                 dataset.append(data_object)
+            torch.distributed.barrier()
 
             if self.data_format == "LSMS":
                 for idx, data_object in enumerate(dataset):
