@@ -90,6 +90,12 @@ def train_validate_test(
             iepoch=-1,
         )
 
+    # import ipdb; ipdb.set_trace()
+    # for data in train_loader:
+    #     print (data, data.num_graphs)
+    # import sys; sys.exit(0)
+
+
     profiler = Profiler("./logs/" + model_with_config_name)
     if "Profile" in config:
         profiler.setup(config["Profile"])
@@ -272,16 +278,17 @@ def reduce_values_ranks_dist(local_tensor):
         local_tensor = local_tensor / dist.get_world_size()
     return local_tensor
 
-
+@torch.no_grad()
 def reduce_values_ranks_mpi(local_tensor):
+    print ("reduce_values_ranks_mpi", local_tensor)
     if dist.get_world_size() > 1:
         from mpi4py import MPI
 
-        _local_tensor = MPI.COMM_WORLD.allreduce(
+        local_tensor = MPI.COMM_WORLD.allreduce(
             local_tensor.detach().cpu().numpy(), op=MPI.SUM
         )
-        _local_tensor = _local_tensor / dist.get_world_size()
-    return torch.tensor(_local_tensor)
+        local_tensor = torch.tensor(local_tensor) / dist.get_world_size()
+    return local_tensor
 
 
 def reduce_values_ranks(local_tensor):
@@ -349,6 +356,7 @@ def train(
     model.train()
 
     use_distds = bool(int(os.getenv("HYDRAGNN_USE_DISTDS", "0")))
+    print ("use_distds", use_distds)
     if use_distds:
         loader.dataset.ddstore.epoch_begin()
     for data in iterate_tqdm(loader, verbosity, desc="Train"):

@@ -94,9 +94,12 @@ class DistDataset(BaseDataset):
         return self.total_ns
 
     def get(self, idx):
+        print ("get", idx)
         data_object = torch_geometric.data.Data()
         for k in self.keys:
+            print ("k", k)
             count = list(self.variable_shape[k])
+            print ("variable_shape", self.variable_shape[k])
             vdim = self.variable_dim[k]
             dtype = self.variable_dtype[k]
             offset = self.variable_offset[k][idx]
@@ -106,13 +109,16 @@ class DistDataset(BaseDataset):
             if vdim > 0:
                 val = np.moveaxis(val, vdim, 0)
                 val = np.ascontiguousarray(val)
+                assert val.data.contiguous
             vname = "%s/%s" % (self.label, k)
+            print ("vname", vname, val.shape, val.dtype, vdim, offset)
             self.ddstore.get(vname, val, offset)
             if vdim > 0:
                 val = np.moveaxis(val, 0, vdim)
                 val = np.ascontiguousarray(val)
             v = torch.tensor(val)
             exec("data_object.%s = v" % (k))
+        # print (idx, data_object)
         return data_object
 
 
