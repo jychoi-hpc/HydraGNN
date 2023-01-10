@@ -21,30 +21,39 @@ from hydragnn.utils.distdataset import DistDataset
 import torch
 import torch.distributed as dist
 
+
 def flatten(l):
     return [item for sublist in l for item in sublist]
 
+
 def check_retainable_connections(data, edge_index):
     # C-C remove, Si-Si remove, Si-O remove O-O remove.
-    assert edge_index < data.edge_index.shape[1], "Edge index exceeds total number of edges available"
+    assert (
+        edge_index < data.edge_index.shape[1]
+    ), "Edge index exceeds total number of edges available"
 
-    if ( data.edge_index[0,edge_index] == 0 and data.edge_index[1,edge_index] != 0 ) or \
-       ( data.edge_index[1,edge_index] == 0 and data.edge_index[0,edge_index] != 0 ):
+    if (
+        data.edge_index[0, edge_index] == 0 and data.edge_index[1, edge_index] != 0
+    ) or (data.edge_index[1, edge_index] == 0 and data.edge_index[0, edge_index] != 0):
         return True
     else:
         return False
 
+
 def remove_edges(data):
     ## (2023/1) jyc: Iterating with index is slow. Generating mask is faster
     # edges_to_retain = [ check_retainable_connections(data, index) for index in range(0,data.edge_index.shape[1]) ]
-    idx = torch.where(data.x == 0.0)[0] ## node index for "C"
+    idx = torch.where(data.x == 0.0)[0]  ## node index for "C"
     edges_to_retain = torch.any(data.edge_index == idx[0], dim=0)
-    if len(idx) > 1: ## in case if there are multiple "C"s
+    if len(idx) > 1:  ## in case if there are multiple "C"s
         for i in range(1, len(idx)):
-            edges_to_retain = torch.logical_or(edges_to_retain, torch.any(data.edge_index == idx[i], dim=0))
-    data.edge_index = data.edge_index[:,edges_to_retain]
-    data.edge_attr = data.edge_attr[edges_to_retain,:]
+            edges_to_retain = torch.logical_or(
+                edges_to_retain, torch.any(data.edge_index == idx[i], dim=0)
+            )
+    data.edge_index = data.edge_index[:, edges_to_retain]
+    data.edge_attr = data.edge_attr[edges_to_retain, :]
     return data
+
 
 def info(*args, logtype="info", sep=" "):
     getattr(logging, logtype)(sep.join(map(str, args)))
@@ -67,7 +76,9 @@ if __name__ == "__main__":
         action="store_true",
         help="distds dataset",
     )
-    parser.add_argument("--inputfile", help="input file", type=str, default="zeolite.json")
+    parser.add_argument(
+        "--inputfile", help="input file", type=str, default="zeolite.json"
+    )
     parser.add_argument("--sampling", help="sampling ratio", type=float, default=None)
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
@@ -130,11 +141,15 @@ if __name__ == "__main__":
                 trainset,
                 valset,
                 testset,
-            ) = hydragnn.preprocess.load_data.load_train_val_test_sets(config, isdist=True)
+            ) = hydragnn.preprocess.load_data.load_train_val_test_sets(
+                config, isdist=True
+            )
 
             ## remove edges
             for dataset in [trainset, valset, testset]:
-                for data in iterate_tqdm(dataset, verbosity_level=2, desc="Remove edges"):
+                for data in iterate_tqdm(
+                    dataset, verbosity_level=2, desc="Remove edges"
+                ):
                     remove_edges(data)
 
             from hydragnn.utils.adiosdataset import AdiosWriter
@@ -154,7 +169,7 @@ if __name__ == "__main__":
     if args.format == "adios":
         from hydragnn.utils.adiosdataset import AdiosDataset
 
-        info("Adios load (distds: %r)"%(args.distds))
+        info("Adios load")
         trainset = AdiosDataset(fname_adios, "trainset", comm, distds=args.distds)
         valset = AdiosDataset(fname_adios, "valset", comm)
         testset = AdiosDataset(fname_adios, "testset", comm)
@@ -209,7 +224,7 @@ if __name__ == "__main__":
             valset = flatten(valset_all)
             testset = flatten(testset_all)
             t1 = time.time()
-            log ("Time:", t1-t0)
+            log("Time:", t1 - t0)
     else:
         raise ValueError("Unknown data format: %d" % args.format)
 
@@ -273,4 +288,3 @@ if __name__ == "__main__":
     hydragnn.utils.print_timers(verbosity)
 
     sys.exit(0)
-

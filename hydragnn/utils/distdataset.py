@@ -13,8 +13,10 @@ except ImportError:
 
 from hydragnn.utils.print_utils import log
 
+
 class DistDataset(BaseDataset):
     """Distributed dataset class"""
+
     def __init__(self, data, label, comm=MPI.COMM_WORLD, distds_ncopy=1):
         super().__init__()
 
@@ -85,7 +87,7 @@ class DistDataset(BaseDataset):
                     val.sum(),
                 ),
             )
-        
+
     def len(self):
         return self.total_ns
 
@@ -111,17 +113,3 @@ class DistDataset(BaseDataset):
             v = torch.tensor(val)
             exec("data_object.%s = v" % (k))
         return data_object
-
-
-
-
-
-
-        
-
-        
-    
-
-
-
-
