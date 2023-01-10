@@ -280,7 +280,6 @@ def reduce_values_ranks_dist(local_tensor):
 
 @torch.no_grad()
 def reduce_values_ranks_mpi(local_tensor):
-    print ("reduce_values_ranks_mpi", local_tensor)
     if dist.get_world_size() > 1:
         from mpi4py import MPI
 
