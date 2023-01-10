@@ -192,8 +192,8 @@ if __name__ == "__main__":
         if args.distds:
             # (2023/01) FIXME: WIP. not working now
             trainset = DistDataset(trainset, "trainset")
-            # valset = DistDataset(valset, "valset")
-            # testset = DistDataset(testset, "testset")
+            valset = DistDataset(valset, "valset")
+            testset = DistDataset(testset, "testset")
             os.environ["HYDRAGNN_AGGR_BACKEND"] = "mpi"
             os.environ["HYDRAGNN_USE_DISTDS"] = "1"
             pass

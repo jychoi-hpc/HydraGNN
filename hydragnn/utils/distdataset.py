@@ -83,9 +83,6 @@ class DistDataset(BaseDataset):
                     val.dtype,
                     val.shape,
                     val.sum(),
-                    # self.data[k].dtype,
-                    # self.data[k].shape,
-                    # self.data[k].sum(),
                 ),
             )
         

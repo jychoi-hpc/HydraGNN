@@ -348,7 +348,7 @@ def train(
     num_samples_local = 0
     model.train()
 
-    use_distds = bool(int(os.getenv("HYDRAGNN_USE_DISTDS", "0")))
+    use_distds = hasattr(loader.dataset, "ddstore") and hasattr(loader.dataset.ddstore, "epoch_begin") and bool(int(os.getenv("HYDRAGNN_USE_DISTDS", "0")))
     if use_distds:
         loader.dataset.ddstore.epoch_begin()
     for data in iterate_tqdm(loader, verbosity, desc="Train"):
@@ -390,7 +390,12 @@ def validate(loader, model, verbosity, reduce_ranks=True):
     tasks_error = torch.zeros(model.module.num_heads, device=get_device())
     num_samples_local = 0
     model.eval()
+    use_distds = hasattr(loader.dataset, "ddstore") and hasattr(loader.dataset.ddstore, "epoch_begin") and bool(int(os.getenv("HYDRAGNN_USE_DISTDS", "0")))
+    if use_distds:
+        loader.dataset.ddstore.epoch_begin()
     for data in iterate_tqdm(loader, verbosity, desc="Validate"):
+        if use_distds:
+            loader.dataset.ddstore.epoch_end()
         head_index = get_head_indices(model, data)
         data = data.to(get_device())
         pred = model(data)
@@ -399,6 +404,10 @@ def validate(loader, model, verbosity, reduce_ranks=True):
         num_samples_local += data.num_graphs
         for itask in range(len(tasks_loss)):
             tasks_error[itask] += tasks_loss[itask] * data.num_graphs
+        if use_distds:
+            loader.dataset.ddstore.epoch_begin()
+    if use_distds:
+        loader.dataset.ddstore.epoch_end()
 
     val_error = total_error / num_samples_local
     tasks_error = tasks_error / num_samples_local
@@ -415,7 +424,12 @@ def test(loader, model, verbosity, reduce_ranks=True, return_samples=True):
     tasks_error = torch.zeros(model.module.num_heads, device=get_device())
     num_samples_local = 0
     model.eval()
+    use_distds = hasattr(loader.dataset, "ddstore") and hasattr(loader.dataset.ddstore, "epoch_begin") and bool(int(os.getenv("HYDRAGNN_USE_DISTDS", "0")))
+    if use_distds:
+        loader.dataset.ddstore.epoch_begin()
     for data in iterate_tqdm(loader, verbosity, desc="Test"):
+        if use_distds:
+            loader.dataset.ddstore.epoch_end()
         head_index = get_head_indices(model, data)
         data = data.to(get_device())
         pred = model(data)
@@ -424,6 +438,10 @@ def test(loader, model, verbosity, reduce_ranks=True, return_samples=True):
         num_samples_local += data.num_graphs
         for itask in range(len(tasks_loss)):
             tasks_error[itask] += tasks_loss[itask] * data.num_graphs
+        if use_distds:
+            loader.dataset.ddstore.epoch_begin()
+    if use_distds:
+        loader.dataset.ddstore.epoch_end()
 
     test_error = total_error / num_samples_local
     tasks_error = tasks_error / num_samples_local
