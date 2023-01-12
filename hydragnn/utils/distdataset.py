@@ -17,22 +17,19 @@ from hydragnn.utils.print_utils import log
 class DistDataset(BaseDataset):
     """Distributed dataset class"""
 
-    def __init__(self, data, label, comm=MPI.COMM_WORLD, distds_ncopy=1):
+    def __init__(self, data, label, comm=MPI.COMM_WORLD):
         super().__init__()
 
         if isinstance(data, list):
             self.dataset.extend(data)
-        elif isinstance(data, torch_geometric.data.Data):
-            self.dataset.append(data)
         else:
-            raise Exception("Unsuppored data type yet.")
+            self.dataset.extend(list(data))
 
         self.label = label
         self.comm = comm
         self.rank = comm.Get_rank()
         self.comm_size = comm.Get_size()
         self.ddstore = dds.PyDDStore(comm)
-        self.distds_ncopy = distds_ncopy
 
         ns = self.comm.allgather(len(self.dataset))
         ns_offset = sum(ns[: self.rank])
@@ -74,9 +71,8 @@ class DistDataset(BaseDataset):
             assert val.data.contiguous
             self.data[k] = val
 
-            _group_id = self.rank // (self.comm_size // self.distds_ncopy)
             vname = "%s/%s" % (label, k)
-            self.ddstore.add(vname, val, _group_id)
+            self.ddstore.add(vname, val)
             log(
                 "DDStore add:",
                 (

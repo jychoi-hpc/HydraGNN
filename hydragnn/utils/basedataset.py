@@ -23,13 +23,9 @@ class BaseDataset(torch.utils.data.Dataset, ABC):
         """
         pass
 
-    def apply(self, transform, inplace=False):
-        dataset = []
+    def apply(self, func):
         for data in self.dataset:
-            dataset.append(transform(data))
-
-        if not inplace:
-            self.dataset = dataset
+            func(data)
 
     def map(self, func):
         for data in self.dataset:

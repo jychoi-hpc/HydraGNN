@@ -205,13 +205,11 @@ if __name__ == "__main__":
                 remove_edges(data)
 
         if args.distds:
-            # (2023/01) FIXME: WIP. not working now
             trainset = DistDataset(trainset, "trainset")
             valset = DistDataset(valset, "valset")
             testset = DistDataset(testset, "testset")
             os.environ["HYDRAGNN_AGGR_BACKEND"] = "mpi"
             os.environ["HYDRAGNN_USE_DISTDS"] = "1"
-            pass
         else:
             # FIXME: Use MPI to gather data. This is no good either. It can be a problem if data size is larger than MPI capacity.
             info("Gather dataset")

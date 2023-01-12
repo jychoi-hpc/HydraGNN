@@ -110,9 +110,15 @@ class AdiosWriter:
                 arr_list = [data[k].cpu().numpy() for data in self.dataset[label]]
                 m0 = np.min([x.shape for x in arr_list], axis=0)
                 m1 = np.max([x.shape for x in arr_list], axis=0)
-                wh = np.where(m0 != m1)[0]
-                assert len(wh) < 2
-                vdim = wh[0] if len(wh) == 1 else 1
+                vdims = list()
+                for i in range(len(m0)):
+                    if m0[i] != m1[i]:
+                        vdims.append(i)
+                ## We can handle only single variable dimension.
+                assert len(vdims) < 2
+                vdim = 0
+                if len(vdims) > 0:
+                    vdim = vdims[0]
                 val = np.concatenate(arr_list, axis=vdim)
                 assert val.data.contiguous
                 shape_list = self.comm.allgather(list(val.shape))
@@ -199,7 +205,6 @@ class AdiosDataset(torch.utils.data.Dataset):
         shmem=False,
         enable_cache=False,
         distds=False,
-        distds_ncopy=1,
     ):
         """
         Parameters
@@ -257,7 +262,6 @@ class AdiosDataset(torch.utils.data.Dataset):
         self.cache = dict()
         self.ddstore = None
         self.distds = distds
-        self.distds_ncopy = distds_ncopy
         if self.distds:
             self.ddstore = dds.PyDDStore(comm)
         log("Adios reading:", self.filename)
@@ -347,11 +351,9 @@ class AdiosDataset(torch.utils.data.Dataset):
                     count = ishape
                     vdim = self.variable_dim[k]
 
-                    _comm_size = self.comm_size // self.distds_ncopy
-                    _rank = self.rank % (self.comm_size // self.distds_ncopy)
-                    rx = list(nsplit(self.variable_count[k], _comm_size))
-                    start[vdim] = sum([sum(x) for x in rx[:_rank]])
-                    count[vdim] = sum(rx[_rank])
+                    rx = list(nsplit(self.variable_count[k], self.comm_size))
+                    start[vdim] = sum([sum(x) for x in rx[: self.rank]])
+                    count[vdim] = sum(rx[self.rank])
 
                     # Read only local portion
                     vname = "%s/%s" % (label, k)
@@ -359,8 +361,7 @@ class AdiosDataset(torch.utils.data.Dataset):
                     if vdim > 0:
                         self.data[k] = np.moveaxis(self.data[k], vdim, 0)
                         self.data[k] = np.ascontiguousarray(self.data[k])
-                    _group_id = self.rank // (self.comm_size // self.distds_ncopy)
-                    self.ddstore.add(vname, self.data[k], _group_id)
+                    self.ddstore.add(vname, self.data[k])
                     log(
                         "DDStore add:",
                         (
