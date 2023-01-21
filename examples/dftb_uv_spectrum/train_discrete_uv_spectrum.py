@@ -53,6 +53,7 @@ def nsplit(a, n):
     return (a[i * k + min(i, m) : (i + 1) * k + min(i + 1, m)] for i in range(n))
 
 
+"""
 def dftb_datasets_load(dirpath, sampling=None, seed=None, frac=[0.9, 0.05, 0.05]):
     if seed is not None:
         random.seed(seed)
@@ -126,46 +127,47 @@ def dftb_datasets_load(dirpath, sampling=None, seed=None, frac=[0.9, 0.05, 0.05]
     )
 
 
-# ## Torch Dataset for DFTB data with subdirectories
-# class DFTBDatasetFactory:
-#     def __init__(
-#         self, datafile, sampling=1.0, seed=43, var_config=None, norm_yflag=False
-#     ):
-#         self.var_config = var_config
+## Torch Dataset for DFTB data with subdirectories
+class DFTBDatasetFactory:
+    def __init__(
+        self, datafile, sampling=1.0, seed=43, var_config=None, norm_yflag=False
+    ):
+        self.var_config = var_config
 
-#         ## Read full data
-#         (
-#             molecule_sets,
-#             values_sets,
-#         ) = dftb_datasets_load(datafile, sampling=sampling, seed=seed)
+        ## Read full data
+        (
+            molecule_sets,
+            values_sets,
+        ) = dftb_datasets_load(datafile, sampling=sampling, seed=seed)
 
-#         info([len(x) for x in values_sets])
-#         self.dataset_lists = list()
-#         for idataset, (molset, valueset) in enumerate(zip(molecule_sets, values_sets)):
-#             self.dataset_lists.append((molset, valueset))
+        info([len(x) for x in values_sets])
+        self.dataset_lists = list()
+        for idataset, (molset, valueset) in enumerate(zip(molecule_sets, values_sets)):
+            self.dataset_lists.append((molset, valueset))
 
-#     def get(self, label):
-#         ## Set only assigned label data
-#         labelnames = ["trainset", "valset", "testset"]
-#         index = labelnames.index(label)
+    def get(self, label):
+        ## Set only assigned label data
+        labelnames = ["trainset", "valset", "testset"]
+        index = labelnames.index(label)
 
-#         molset, valueset = self.dataset_lists[index]
-#         return (molset, valueset)
+        molset, valueset = self.dataset_lists[index]
+        return (molset, valueset)
 
 
-# class DFTBDataset(torch.utils.data.Dataset):
-#     def __init__(self, datasetfactory, label):
-#         self.molecule_set, self.valueset = datasetfactory.get(label)
-#         self.var_config = datasetfactory.var_config
+class DFTBDataset(torch.utils.data.Dataset):
+    def __init__(self, datasetfactory, label):
+        self.molecule_set, self.valueset = datasetfactory.get(label)
+        self.var_config = datasetfactory.var_config
 
-#     def __len__(self):
-#         return len(self.smileset)
+    def __len__(self):
+        return len(self.smileset)
 
-#     def __getitem__(self, idx):
-#         mol = self.molecule_set[idx]
-#         ytarget = self.valueset[idx]
-#         data = generate_graphdata_from_rdkit_molecule(mol, ytarget, dftb_node_types, self.var_config)
-#         return data
+    def __getitem__(self, idx):
+        mol = self.molecule_set[idx]
+        ytarget = self.valueset[idx]
+        data = generate_graphdata_from_rdkit_molecule(mol, ytarget, dftb_node_types, self.var_config)
+        return data
+"""
 
 from hydragnn.utils.basedataset import BaseDataset
 
@@ -200,7 +202,18 @@ class DFTBDataset(BaseDataset):
             self.world_size = torch.distributed.get_world_size()
             self.rank = torch.distributed.get_rank()
 
-        dirlist = sorted(os.listdir(dirpath))
+        if os.path.isdir(dirpath):
+            dirlist = sorted(os.listdir(dirpath))
+        else:
+            filelist = dirpath
+            info("Reading filelist:", filelist)
+            dirpath = os.path.dirname(dirpath)
+            dirlist = list()
+            with open(filelist, "r") as f:
+                lines = f.readlines()
+                for line in lines:
+                    dirlist.append(line.rstrip())
+
         if self.dist:
             ## Random shuffle dirlist to avoid the same test/validation set
             random.seed(43)
@@ -220,91 +233,6 @@ class DFTBDataset(BaseDataset):
                 os.path.join(dirpath, subdir), dftb_node_types, var_config
             )
             self.dataset.append(data_object)
-
-    def __normalize_dataset(self):
-
-        """Performs the normalization on Data objects and returns the normalized dataset."""
-        num_node_features = len(self.node_feature_dim)
-        num_graph_features = len(self.graph_feature_dim)
-
-        self.minmax_graph_feature = np.full((2, num_graph_features), np.inf)
-        # [0,...]:minimum values; [1,...]: maximum values
-        self.minmax_node_feature = np.full((2, num_node_features), np.inf)
-        self.minmax_graph_feature[1, :] *= -1
-        self.minmax_node_feature[1, :] *= -1
-        for data in self.dataset:
-            # find maximum and minimum values for graph level features
-            g_index_start = 0
-            for ifeat in range(num_graph_features):
-                g_index_end = g_index_start + self.graph_feature_dim[ifeat]
-                self.minmax_graph_feature[0, ifeat] = min(
-                    torch.min(data.y[g_index_start:g_index_end]),
-                    self.minmax_graph_feature[0, ifeat],
-                )
-                self.minmax_graph_feature[1, ifeat] = max(
-                    torch.max(data.y[g_index_start:g_index_end]),
-                    self.minmax_graph_feature[1, ifeat],
-                )
-                g_index_start = g_index_end
-
-            # find maximum and minimum values for node level features
-            n_index_start = 0
-            for ifeat in range(num_node_features):
-                n_index_end = n_index_start + self.node_feature_dim[ifeat]
-                self.minmax_node_feature[0, ifeat] = min(
-                    torch.min(data.x[:, n_index_start:n_index_end]),
-                    self.minmax_node_feature[0, ifeat],
-                )
-                self.minmax_node_feature[1, ifeat] = max(
-                    torch.max(data.x[:, n_index_start:n_index_end]),
-                    self.minmax_node_feature[1, ifeat],
-                )
-                n_index_start = n_index_end
-
-        ## Gather minmax in parallel
-        if self.dist:
-            self.minmax_graph_feature[0, :] = comm_reduce(
-                self.minmax_graph_feature[0, :], torch.distributed.ReduceOp.MIN
-            )
-            self.minmax_graph_feature[1, :] = comm_reduce(
-                self.minmax_graph_feature[1, :], torch.distributed.ReduceOp.MAX
-            )
-            self.minmax_node_feature[0, :] = comm_reduce(
-                self.minmax_node_feature[0, :], torch.distributed.ReduceOp.MIN
-            )
-            self.minmax_node_feature[1, :] = comm_reduce(
-                self.minmax_node_feature[1, :], torch.distributed.ReduceOp.MAX
-            )
-
-        for data in self.dataset:
-            g_index_start = 0
-            for ifeat in range(num_graph_features):
-                g_index_end = g_index_start + self.graph_feature_dim[ifeat]
-                data.y[g_index_start:g_index_end] = tensor_divide(
-                    (
-                        data.y[g_index_start:g_index_end]
-                        - self.minmax_graph_feature[0, ifeat]
-                    ),
-                    (
-                        self.minmax_graph_feature[1, ifeat]
-                        - self.minmax_graph_feature[0, ifeat]
-                    ),
-                )
-                g_index_start = g_index_end
-            n_index_start = 0
-            for ifeat in range(num_node_features):
-                n_index_end = n_index_start + self.node_feature_dim[ifeat]
-                data.x[:, n_index_start:n_index_end] = tensor_divide(
-                    (
-                        data.x[:, n_index_start:n_index_end]
-                        - self.minmax_node_feature[0, ifeat]
-                    ),
-                    (
-                        self.minmax_node_feature[1, ifeat]
-                        - self.minmax_node_feature[0, ifeat]
-                    ),
-                )
-                n_index_start = n_index_end
 
     def len(self):
         return len(self.dataset)
@@ -386,7 +314,12 @@ if __name__ == "__main__":
     modelname = "dftb_uv_spectrum"
     if args.preonly:
         ## local data
-        total = DFTBDataset(datafile, dftb_node_types, var_config, dist=True)
+        total = DFTBDataset(
+            os.path.join(datafile, "filelist.txt"),
+            dftb_node_types,
+            var_config,
+            dist=True,
+        )
         trainset, valset, testset = split_dataset(
             dataset=total,
             perc_train=0.9,
