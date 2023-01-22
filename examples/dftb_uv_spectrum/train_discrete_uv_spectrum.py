@@ -346,6 +346,7 @@ if __name__ == "__main__":
                 "trainset",
                 # minmax_node_feature=total.minmax_node_feature,
                 # minmax_graph_feature=total.minmax_graph_feature,
+                use_subdir=True,
             )
             SimplePickleWriter(
                 valset,
@@ -353,6 +354,7 @@ if __name__ == "__main__":
                 "valset",
                 # minmax_node_feature=total.minmax_node_feature,
                 # minmax_graph_feature=total.minmax_graph_feature,
+                use_subdir=True,
             )
             SimplePickleWriter(
                 testset,
@@ -360,6 +362,7 @@ if __name__ == "__main__":
                 "testset",
                 # minmax_node_feature=total.minmax_node_feature,
                 # minmax_graph_feature=total.minmax_graph_feature,
+                use_subdir=True,
             )
         else:
             raise NotImplementedError("No supported format: %s" % (args.format))

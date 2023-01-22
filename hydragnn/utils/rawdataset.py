@@ -51,7 +51,10 @@ def comm_reduce(x, op):
     return y
 
 
-class RawDataset(RawDataset):
+from abc import ABC, abstractmethod
+
+
+class RawDataset(BaseDataset, ABC):
     """Raw dataset class"""
 
     def __init__(self, config, dist=False, sampling=None):
