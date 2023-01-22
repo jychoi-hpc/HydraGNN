@@ -20,7 +20,7 @@ from hydragnn.utils.time_utils import Timer
 from hydragnn.utils.config_utils import get_log_name_config
 from hydragnn.preprocess.load_data import split_dataset
 from hydragnn.utils.model import print_model
-from hydragnn.utils.rawdataset import RawDataset
+from hydragnn.utils.rawdataset import LSMSDataset
 from hydragnn.utils.distdataset import DistDataset
 from hydragnn.utils.pickledataset import SimplePickleWriter, SimplePickleDataset
 
@@ -227,7 +227,7 @@ if __name__ == "__main__":
         comm.Barrier()
 
         config["Dataset"]["path"]["total"] = dir
-        total = RawDataset(config, dist=True, sampling=args.sampling)
+        total = LSMSDataset(config, dist=True, sampling=args.sampling)
 
         trainset, valset, testset = split_dataset(
             dataset=total,
