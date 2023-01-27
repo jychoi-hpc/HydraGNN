@@ -22,6 +22,8 @@ try:
 except ImportError:
     pass
 
+import hydragnn.utils.tracer as tr
+
 
 def nsplit(a, n):
     k, m = divmod(len(a), n)
@@ -388,6 +390,7 @@ class AdiosDataset(torch.utils.data.Dataset):
         """
         return self.ndata
 
+    @tr.profile("getitem")
     def __getitem__(self, idx):
         """
         Get data with a given index

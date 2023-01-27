@@ -32,6 +32,8 @@ from hydragnn.utils.distributed import get_comm_size_and_rank
 import torch.distributed as dist
 import pickle
 
+import hydragnn.utils.tracer as tr
+
 
 def train_validate_test(
     model,
@@ -94,6 +96,8 @@ def train_validate_test(
     if "Profile" in config:
         profiler.setup(config["Profile"])
 
+    _, rank = get_comm_size_and_rank()
+
     timer = Timer("train_validate_test")
     timer.start()
 
@@ -104,9 +108,13 @@ def train_validate_test(
                 dataloader.sampler.set_epoch(epoch)
 
         with profiler as prof:
+            tr.enable()
+            tr.start("train")
             train_loss, train_taskserr = train(
                 train_loader, model, optimizer, verbosity, profiler=prof
             )
+            tr.stop("train")
+            tr.disable()
 
         val_loss, val_taskserr = validate(
             val_loader, model, verbosity, reduce_ranks=True
@@ -354,34 +362,48 @@ def train(
         and hasattr(loader.dataset.ddstore, "epoch_begin")
         and bool(int(os.getenv("HYDRAGNN_USE_DISTDS", "0")))
     )
+    tr.start("dataload")
     if use_distds:
         loader.dataset.ddstore.epoch_begin()
     for data in iterate_tqdm(loader, verbosity, desc="Train"):
         if use_distds:
             loader.dataset.ddstore.epoch_end()
+        tr.stop("dataload")
+        tr.start("zero_grad")
         with record_function("zero_grad"):
             opt.zero_grad()
+        tr.stop("zero_grad")
+        tr.start("get_head_indices")
         with record_function("get_head_indices"):
             head_index = get_head_indices(model, data)
+        tr.stop("get_head_indices")
+        tr.start("forward")
         with record_function("forward"):
             data = data.to(get_device())
             pred = model(data)
             loss, tasks_loss = model.module.loss(pred, data.y, head_index)
+        tr.stop("forward")
+        tr.start("backward")
         with record_function("backward"):
             loss.backward()
-        print_peak_memory(verbosity, "Max memory allocated before optimizer step")
+        tr.stop("backward")
+        tr.start("opt_step")
+        # print_peak_memory(verbosity, "Max memory allocated before optimizer step")
         opt.step()
-        print_peak_memory(verbosity, "Max memory allocated after optimizer")
+        # print_peak_memory(verbosity, "Max memory allocated after optimizer step")
+        tr.stop("opt_step")
         profiler.step()
         with torch.no_grad():
             total_error += loss * data.num_graphs
             num_samples_local += data.num_graphs
             for itask in range(len(tasks_loss)):
                 tasks_error[itask] += tasks_loss[itask] * data.num_graphs
+        tr.start("dataload")
         if use_distds:
             loader.dataset.ddstore.epoch_begin()
     if use_distds:
         loader.dataset.ddstore.epoch_end()
+    tr.stop("dataload")
 
     train_error = total_error / num_samples_local
     tasks_error = tasks_error / num_samples_local

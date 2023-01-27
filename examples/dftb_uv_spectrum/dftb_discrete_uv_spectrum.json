@@ -50,7 +50,7 @@
       "denormalize_output": false
     },
     "Training": {
-      "num_epoch": 50,
+      "num_epoch": 2,
       "batch_size": 128,
       "continue": 0,
       "startfrom": "existing_model",

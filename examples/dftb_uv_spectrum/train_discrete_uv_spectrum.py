@@ -39,6 +39,8 @@ import torch.distributed as dist
 
 import warnings
 
+import hydragnn.utils.tracer as tr
+
 # FIXME: this works fine for now because we train on GDB-9 molecules
 # for larger chemical spaces, the following atom representation has to be properly expanded
 dftb_node_types = {"C": 0, "F": 1, "H": 2, "N": 3, "O": 4, "S": 5}
@@ -98,6 +100,7 @@ def dftb_datasets_load(dirpath, sampling=None, seed=None, frac=[0.9, 0.05, 0.05]
     print("Total:", len(molecules_all), len(values_all))
 
     a = list(range(len(molecules_all)))
+    a = random.sample(a, len(a))
     ix0, ix1, ix2 = np.split(
         a, [int(frac[0] * len(a)), int((frac[0] + frac[1]) * len(a))]
     )
@@ -368,6 +371,8 @@ if __name__ == "__main__":
             raise NotImplementedError("No supported format: %s" % (args.format))
         sys.exit(0)
 
+    tr.initialize()
+    tr.disable()
     timer = Timer("load_data")
     timer.start()
     if args.format == "adios":
@@ -559,7 +564,11 @@ if __name__ == "__main__":
             fig.savefig("./logs/" + log_name + "/" + varname + "_all.png")
         plt.close()
 
-    if args.format == "adios":
-        trainset.unlink()
+    if tr.has("GPTLTracer"):
+        import gptl4py as gp
+
+        gp.pr_file(os.path.join("logs", log_name, "gp_timing.p%d" % rank))
+        gp.pr_summary_file(os.path.join("logs", log_name, "gp_timing.summary"))
+        gp.finalize()
 
     sys.exit(0)

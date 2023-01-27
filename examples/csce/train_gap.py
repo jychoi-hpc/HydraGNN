@@ -1,3 +1,8 @@
+import mpi4py
+
+mpi4py.rc.thread_level = "serialized"
+mpi4py.rc.threads = False
+
 import os, json
 import matplotlib.pyplot as plt
 import random
@@ -14,11 +19,13 @@ import time
 import hydragnn
 from hydragnn.utils.print_utils import print_distributed, iterate_tqdm
 from hydragnn.utils.time_utils import Timer
-from hydragnn.utils.pickledataset import SimplePickleDataset
+from hydragnn.utils.distdataset import DistDataset
+from hydragnn.utils.pickledataset import SimplePickleWriter, SimplePickleDataset
 from hydragnn.utils.smiles_utils import (
     get_node_attribute_name,
     generate_graphdata_from_smilestr,
 )
+import hydragnn.utils.tracer as tr
 
 import numpy as np
 
@@ -29,12 +36,6 @@ except ImportError:
 
 import torch_geometric.data
 import torch
-import torch.distributed as dist
-
-import warnings
-
-warnings.filterwarnings("error")
-
 
 csce_node_types = {"C": 0, "F": 1, "H": 2, "N": 3, "O": 4, "S": 5}
 
@@ -64,6 +65,7 @@ def csce_datasets_load(datafile, sampling=None, seed=None, frac=[0.94, 0.02, 0.0
     print("Total:", len(smiles_all), len(values_all))
 
     a = list(range(len(smiles_all)))
+    a = random.sample(a, len(a))
     ix0, ix1, ix2 = np.split(
         a, [int(frac[0] * len(a)), int((frac[0] + frac[1]) * len(a))]
     )
@@ -175,6 +177,29 @@ if __name__ == "__main__":
         "--csv", help="CSV dataset", action="store_const", dest="format", const="csv"
     )
     parser.set_defaults(format="adios")
+    group1 = parser.add_mutually_exclusive_group()
+    group1.add_argument(
+        "--shmem",
+        help="shmem dataset",
+        action="store_const",
+        dest="dataset",
+        const="shmem",
+    )
+    group1.add_argument(
+        "--distds",
+        help="distds dataset",
+        action="store_const",
+        dest="dataset",
+        const="distds",
+    )
+    group1.add_argument(
+        "--simple",
+        help="no special dataset",
+        action="store_const",
+        dest="dataset",
+        const="simple",
+    )
+    parser.set_defaults(dataset="shmem")
     args = parser.parse_args()
 
     graph_feature_names = ["GAP"]
@@ -246,13 +271,6 @@ if __name__ == "__main__":
             info("local smileset size:", len(_smileset))
 
             setname = ["trainset", "valset", "testset"]
-            if args.format == "pickle":
-                if rank == 0:
-                    with open(
-                        "examples/csce/dataset/pickle/%s.meta" % (setname[idataset]),
-                        "w",
-                    ) as f:
-                        f.write(str(len(smileset)))
 
             for i, (smilestr, ytarget) in iterate_tqdm(
                 enumerate(zip(_smileset, _valueset)), verbosity, total=len(_smileset)
@@ -262,17 +280,28 @@ if __name__ == "__main__":
                 )
                 dataset_lists[idataset].append(data)
 
-                ## (2022/07) This is for testing to compare with Adios
-                ## pickle write
-                if args.format == "pickle":
-                    fname = "examples/csce/dataset/pickle/csce_gap-%s-%d.pk" % (
-                        setname[idataset],
-                        rx.start + i,
-                    )
-                    with open(fname, "wb") as f:
-                        pickle.dump(data, f)
-
         ## local data
+        if args.format == "pickle":
+            basedir = os.path.join(os.path.dirname(__file__), "dataset", "pickle")
+            _trainset = dataset_lists[0]
+            _valset = dataset_lists[1]
+            _testset = dataset_lists[2]
+            SimplePickleWriter(
+                _trainset,
+                basedir,
+                "trainset",
+            )
+            SimplePickleWriter(
+                _valset,
+                basedir,
+                "valset",
+            )
+            SimplePickleWriter(
+                _testset,
+                basedir,
+                "testset",
+            )
+
         if args.format == "adios":
             _trainset = dataset_lists[0]
             _valset = dataset_lists[1]
@@ -286,18 +315,26 @@ if __name__ == "__main__":
 
         sys.exit(0)
 
+    tr.initialize()
+    tr.disable()
     timer = Timer("load_data")
     timer.start()
     if args.format == "adios":
+        shmem = distds = False
+        if args.dataset == "shmem":
+            shmem = True
+            os.environ["HYDRAGNN_AGGR_BACKEND"] = "torch"
+        elif args.dataset == "distds":
+            distds = True
+            os.environ["HYDRAGNN_AGGR_BACKEND"] = "mpi"
+
+        opt = {"preload": False, "shmem": shmem, "distds": distds}
         trainset = AdiosDataset(
-            "examples/csce/dataset/csce_gap.bp",
-            "trainset",
-            comm,
-            preload=False,
-            shmem=True,
+            "examples/csce/dataset/csce_gap.bp", "trainset", comm, **opt
         )
         valset = AdiosDataset("examples/csce/dataset/csce_gap.bp", "valset", comm)
         testset = AdiosDataset("examples/csce/dataset/csce_gap.bp", "testset", comm)
+        comm.Barrier()
     elif args.format == "csv":
         fact = CSCEDatasetFactory(
             "examples/csce/dataset/csce_gap_synth.csv",
@@ -308,15 +345,18 @@ if __name__ == "__main__":
         valset = CSCEDataset(fact, "valset")
         testset = CSCEDataset(fact, "testset")
     elif args.format == "pickle":
-        trainset = SimplePickleDataset(
-            "examples/csce/dataset/pickle", "csce_gap", "trainset"
-        )
-        valset = SimplePickleDataset(
-            "examples/csce/dataset/pickle", "csce_gap", "valset"
-        )
-        testset = SimplePickleDataset(
-            "examples/csce/dataset/pickle", "csce_gap", "testset"
-        )
+        basedir = os.path.join(os.path.dirname(__file__), "dataset", "pickle")
+        trainset = SimplePickleDataset(basedir, "trainset")
+        valset = SimplePickleDataset(basedir, "valset")
+        testset = SimplePickleDataset(basedir, "testset")
+        if args.dataset == "distds":
+            for dataset in (trainset, valset, testset):
+                rx = list(nsplit(range(len(dataset)), comm_size))[rank]
+                dataset.setsubset(rx)
+            opt = {}
+            trainset = DistDataset(trainset, "trainset", **opt)
+            valset = DistDataset(valset, "valset", **opt)
+            testset = DistDataset(testset, "testset", **opt)
     else:
         raise NotImplementedError("No supported format: %s" % (args.format))
 
@@ -332,7 +372,7 @@ if __name__ == "__main__":
 
     config = hydragnn.utils.update_config(config, train_loader, val_loader, test_loader)
 
-    with open("./logs/" + log_name + "/config.json", "w") as f:
+    with open(os.path.join("logs", log_name, "config.json"), "w") as f:
         json.dump(config, f)
 
     timer.stop()
@@ -411,10 +451,13 @@ if __name__ == "__main__":
                 "MAE: {:.2f}".format(error_mae),
             )
         if rank == 0:
-            fig.savefig("./logs/" + log_name + "/" + varname + "_all.png")
+            fig.savefig(os.path.join("logs", log_name, varname + "_all.png"))
         plt.close()
 
-    if args.format == "adios":
-        trainset.unlink()
+    if tr.has("GPTLTracer"):
+        import gptl4py as gp
 
+        gp.pr_file(os.path.join("logs", log_name, "gp_timing.p%d" % rank))
+        gp.pr_summary_file(os.path.join("logs", log_name, "gp_timing.summary"))
+        gp.finalize()
     sys.exit(0)
