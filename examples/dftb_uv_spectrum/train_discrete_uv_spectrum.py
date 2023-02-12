@@ -334,49 +334,46 @@ if __name__ == "__main__":
         deg = gather_deg(trainset)
         config["Dataset"]["trainset_pna_deg"] = deg
 
-        if args.format == "adios":
-            fname = os.path.join(
-                os.path.dirname(__file__), "./dataset/%s.bp" % modelname
-            )
-            adwriter = AdiosWriter(fname, comm)
-            adwriter.add("trainset", trainset)
-            adwriter.add("valset", valset)
-            adwriter.add("testset", testset)
-            # adwriter.add_global("minmax_node_feature", total.minmax_node_feature)
-            # adwriter.add_global("minmax_graph_feature", total.minmax_graph_feature)
-            adwriter.add_global("trainset_pna_deg", deg)
-            adwriter.save()
-        elif args.format == "pickle":
-            basedir = os.path.join(os.path.dirname(__file__), "dataset", "pickle")
-            attrs = dict()
-            attrs["trainset_pna_deg"] = deg
-            SimplePickleWriter(
-                trainset,
-                basedir,
-                "trainset",
-                # minmax_node_feature=total.minmax_node_feature,
-                # minmax_graph_feature=total.minmax_graph_feature,
-                use_subdir=True,
-                attrs=attrs,
-            )
-            SimplePickleWriter(
-                valset,
-                basedir,
-                "valset",
-                # minmax_node_feature=total.minmax_node_feature,
-                # minmax_graph_feature=total.minmax_graph_feature,
-                use_subdir=True,
-            )
-            SimplePickleWriter(
-                testset,
-                basedir,
-                "testset",
-                # minmax_node_feature=total.minmax_node_feature,
-                # minmax_graph_feature=total.minmax_graph_feature,
-                use_subdir=True,
-            )
-        else:
-            raise NotImplementedError("No supported format: %s" % (args.format))
+        ## adios
+        fname = os.path.join(os.path.dirname(__file__), "./dataset/%s.bp" % modelname)
+        adwriter = AdiosWriter(fname, comm)
+        adwriter.add("trainset", trainset)
+        adwriter.add("valset", valset)
+        adwriter.add("testset", testset)
+        # adwriter.add_global("minmax_node_feature", total.minmax_node_feature)
+        # adwriter.add_global("minmax_graph_feature", total.minmax_graph_feature)
+        adwriter.add_global("trainset_pna_deg", deg)
+        adwriter.save()
+
+        ## pickle
+        basedir = os.path.join(os.path.dirname(__file__), "dataset", "pickle")
+        attrs = dict()
+        attrs["trainset_pna_deg"] = deg
+        SimplePickleWriter(
+            trainset,
+            basedir,
+            "trainset",
+            # minmax_node_feature=total.minmax_node_feature,
+            # minmax_graph_feature=total.minmax_graph_feature,
+            use_subdir=True,
+            attrs=attrs,
+        )
+        SimplePickleWriter(
+            valset,
+            basedir,
+            "valset",
+            # minmax_node_feature=total.minmax_node_feature,
+            # minmax_graph_feature=total.minmax_graph_feature,
+            use_subdir=True,
+        )
+        SimplePickleWriter(
+            testset,
+            basedir,
+            "testset",
+            # minmax_node_feature=total.minmax_node_feature,
+            # minmax_graph_feature=total.minmax_graph_feature,
+            use_subdir=True,
+        )
         sys.exit(0)
 
     tr.initialize()
