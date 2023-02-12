@@ -207,6 +207,7 @@ class AdiosDataset(torch.utils.data.Dataset):
         shmem=False,
         enable_cache=False,
         distds=False,
+        distds_nsplit=1,
     ):
         """
         Parameters
@@ -264,8 +265,19 @@ class AdiosDataset(torch.utils.data.Dataset):
         self.cache = dict()
         self.ddstore = None
         self.distds = distds
+        self.distds_nsplit = distds_nsplit
         if self.distds:
-            self.ddstore = dds.PyDDStore(comm)
+            self.ddstore_comm = self.comm.Split(
+                self.rank // self.distds_nsplit, self.rank
+            )
+            self.ddstore_comm_rank = self.ddstore_comm.Get_rank()
+            self.ddstore_comm_size = self.ddstore_comm.Get_size()
+            log(
+                "ddstore_comm_rank,ddstore_comm_size",
+                self.ddstore_comm_rank,
+                self.ddstore_comm_size,
+            )
+            self.ddstore = dds.PyDDStore(self.ddstore_comm)
         log("Adios reading:", self.filename)
         with ad2.open(self.filename, "r", MPI.COMM_SELF) as f:
             self.vars = f.available_variables()
@@ -353,9 +365,9 @@ class AdiosDataset(torch.utils.data.Dataset):
                     count = ishape
                     vdim = self.variable_dim[k]
 
-                    rx = list(nsplit(self.variable_count[k], self.comm_size))
-                    start[vdim] = sum([sum(x) for x in rx[: self.rank]])
-                    count[vdim] = sum(rx[self.rank])
+                    rx = list(nsplit(self.variable_count[k], self.ddstore_comm_size))
+                    start[vdim] = sum([sum(x) for x in rx[: self.ddstore_comm_rank]])
+                    count[vdim] = sum(rx[self.ddstore_comm_rank])
 
                     # Read only local portion
                     vname = "%s/%s" % (label, k)
