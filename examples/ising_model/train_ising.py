@@ -256,7 +256,9 @@ if __name__ == "__main__":
         adwriter.add_global("trainset_pna_deg", deg)
         adwriter.save()
 
-        basedir = os.path.join(os.path.dirname(__file__), "dataset", "%s.pickle")
+        basedir = os.path.join(
+            os.path.dirname(__file__), "dataset", "%s.pickle" % modelname
+        )
         attrs = dict()
         attrs["minmax_node_feature"] = total.minmax_node_feature
         attrs["minmax_graph_feature"] = total.minmax_graph_feature
