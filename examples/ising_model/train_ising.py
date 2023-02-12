@@ -256,7 +256,7 @@ if __name__ == "__main__":
         adwriter.add_global("trainset_pna_deg", deg)
         adwriter.save()
 
-        basedir = os.path.join(os.path.dirname(__file__), "dataset", "pickle")
+        basedir = os.path.join(os.path.dirname(__file__), "dataset", "%s.pickle")
         attrs = dict()
         attrs["minmax_node_feature"] = total.minmax_node_feature
         attrs["minmax_graph_feature"] = total.minmax_graph_feature
@@ -298,7 +298,9 @@ if __name__ == "__main__":
         testset = AdiosDataset(fname, "testset", comm, **opt)
     elif args.format == "pickle":
         info("Pickle load")
-        basedir = os.path.join(os.path.dirname(__file__), "dataset", "pickle")
+        basedir = os.path.join(
+            os.path.dirname(__file__), "dataset", "%s.pickle" % modelname
+        )
         trainset = SimplePickleDataset(basedir, "trainset")
         valset = SimplePickleDataset(basedir, "valset")
         testset = SimplePickleDataset(basedir, "testset")
