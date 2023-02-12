@@ -46,6 +46,8 @@ import math
 
 from create_configurations import E_dimensionless
 
+import hydragnn.utils.tracer as tr
+
 
 def write_to_file(total_energy, atomic_features, count_config, dir, prefix):
 
@@ -144,6 +146,7 @@ if __name__ == "__main__":
     parser.add_argument("--sampling", type=float, help="sampling ratio", default=None)
     parser.add_argument("--distds", action="store_true", help="distds dataset")
     parser.add_argument("--distds_nsplit", type=int, help="distds nsplit", default=1)
+    parser.add_argument("--log", help="log name")
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
         "--adios",
@@ -167,7 +170,10 @@ if __name__ == "__main__":
     with open(input_filename, "r") as f:
         config = json.load(f)
 
-    hydragnn.utils.setup_log(get_log_name_config(config))
+    log_name = get_log_name_config(config)
+    if args.log is not None:
+        log_name = args.log
+    hydragnn.utils.setup_log(log_name)
     ##################################################################################################################
     # Always initialize for multi-rank training.
     comm_size, rank = hydragnn.utils.setup_ddp()
@@ -273,6 +279,8 @@ if __name__ == "__main__":
         )
         sys.exit(0)
 
+    tr.initialize()
+    tr.disable()
     timer = Timer("load_data")
     timer.start()
 
@@ -355,7 +363,6 @@ if __name__ == "__main__":
         optimizer, mode="min", factor=0.5, patience=5, min_lr=0.00001
     )
 
-    log_name = get_log_name_config(config)
     writer = hydragnn.utils.get_summary_writer(log_name)
 
     if dist.is_initialized():
@@ -379,4 +386,10 @@ if __name__ == "__main__":
     hydragnn.utils.save_model(model, optimizer, log_name)
     hydragnn.utils.print_timers(verbosity)
 
+    if tr.has("GPTLTracer"):
+        import gptl4py as gp
+
+        gp.pr_file(os.path.join("logs", log_name, "gp_timing.p%d" % rank))
+        gp.pr_summary_file(os.path.join("logs", log_name, "gp_timing.summary"))
+        gp.finalize()
     sys.exit(0)
