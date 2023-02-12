@@ -117,7 +117,9 @@ class SimplePickleWriter:
                 subdir = os.path.join(basedir, k)
                 os.makedirs(subdir, exist_ok=True)
 
-        for i, data in enumerate(self.dataset):
+        for i, data in iterate_tqdm(
+            enumerate(self.dataset), 2, desc="Pickle write %s" % self.label
+        ):
             fname = "%s-%d.pk" % (label, noffset + i)
             dirfname = os.path.join(basedir, fname)
             if use_subdir:
