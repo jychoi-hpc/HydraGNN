@@ -25,6 +25,7 @@ from hydragnn.utils.distributed import get_device
 from hydragnn.preprocess.load_data import split_dataset
 from hydragnn.utils.distdataset import DistDataset
 from hydragnn.utils.pickledataset import SimplePickleWriter, SimplePickleDataset
+from hydragnn.preprocess.utils import gather_deg
 
 import numpy as np
 
@@ -330,6 +331,9 @@ if __name__ == "__main__":
         )
         print(len(total), len(trainset), len(valset), len(testset))
 
+        deg = gather_deg(trainset)
+        config["Dataset"]["trainset_pna_deg"] = deg
+
         if args.format == "adios":
             fname = os.path.join(
                 os.path.dirname(__file__), "./dataset/%s.bp" % modelname
@@ -340,9 +344,12 @@ if __name__ == "__main__":
             adwriter.add("testset", testset)
             # adwriter.add_global("minmax_node_feature", total.minmax_node_feature)
             # adwriter.add_global("minmax_graph_feature", total.minmax_graph_feature)
+            adwriter.add_global("trainset_pna_deg", deg)
             adwriter.save()
         elif args.format == "pickle":
             basedir = os.path.join(os.path.dirname(__file__), "dataset", "pickle")
+            attrs = dict()
+            attrs["trainset_pna_deg"] = deg
             SimplePickleWriter(
                 trainset,
                 basedir,
@@ -350,6 +357,7 @@ if __name__ == "__main__":
                 # minmax_node_feature=total.minmax_node_feature,
                 # minmax_graph_feature=total.minmax_graph_feature,
                 use_subdir=True,
+                attrs=attrs,
             )
             SimplePickleWriter(
                 valset,
@@ -395,6 +403,7 @@ if __name__ == "__main__":
         testset = SimplePickleDataset(basedir, "testset")
         # minmax_node_feature = trainset.minmax_node_feature
         # minmax_graph_feature = trainset.minmax_graph_feature
+        trainset_pna_deg = trainset.trainset_pna_deg
         if args.distds:
             for dataset in (trainset, valset, testset):
                 rx = list(nsplit(range(len(dataset)), comm_size))[rank]
@@ -405,6 +414,7 @@ if __name__ == "__main__":
             testset = DistDataset(testset, "testset", **opt)
             # trainset.minmax_node_feature = minmax_node_feature
             # trainset.minmax_graph_feature = minmax_graph_feature
+            trainset.trainset_pna_deg = trainset_pna_deg
     else:
         raise NotImplementedError("No supported format: %s" % (args.format))
 
@@ -421,7 +431,11 @@ if __name__ == "__main__":
         trainset, valset, testset, config["NeuralNetwork"]["Training"]["batch_size"]
     )
 
+    if hasattr(trainset, "trainset_pna_deg"):
+        config["Dataset"]["trainset_pna_deg"] = trainset.trainset_pna_deg
     config = hydragnn.utils.update_config(config, train_loader, val_loader, test_loader)
+    if "trainset_pna_deg" in config["Dataset"]:
+        del config["Dataset"]["trainset_pna_deg"]
 
     with open("./logs/" + log_name + "/config.json", "w") as f:
         json.dump(config, f)

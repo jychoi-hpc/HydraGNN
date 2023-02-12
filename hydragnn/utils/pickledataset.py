@@ -28,13 +28,15 @@ class SimplePickleDataset(BaseDataset):
 
         fname = os.path.join(basedir, "%s-meta.pk" % label)
         with open(fname, "rb") as f:
-            self.minmax_node_feature = pickle.load(f)
-            self.minmax_graph_feature = pickle.load(f)
             self.ntotal = pickle.load(f)
             self.use_subdir = pickle.load(f)
             self.nmax_persubdir = pickle.load(f)
-
+            self.attrs = pickle.load(f)
         log("Pickle files:", self.label, self.ntotal)
+        if self.attrs is None:
+            self.attrs = dict()
+        for k in self.attrs:
+            setattr(self, k, self.attrs[k])
 
         if self.subset is None:
             self.subset = list(range(self.ntotal))
@@ -65,11 +67,10 @@ class SimplePickleWriter:
         dataset,
         basedir,
         label="total",
-        minmax_node_feature=None,
-        minmax_graph_feature=None,
         use_subdir=False,
         nmax_persubdir=10_000,
         comm=MPI.COMM_WORLD,
+        attrs=dict(),
     ):
         """
         Parameters
@@ -78,8 +79,6 @@ class SimplePickleWriter:
         basedir: basedir
         label: label
         nmax: nmax in case of subdir
-        minmax_node_feature: minmax_node_feature
-        minmax_graph_feature: minmax_graph_feature
         comm: MPI communicator
         """
 
@@ -94,9 +93,6 @@ class SimplePickleWriter:
         self.comm = comm
         self.rank = comm.Get_rank()
 
-        self.minmax_node_feature = minmax_node_feature
-        self.minmax_graph_feature = minmax_graph_feature
-
         ns = self.comm.allgather(len(self.dataset))
         noffset = sum(ns[: self.rank])
         ntotal = sum(ns)
@@ -106,11 +102,10 @@ class SimplePickleWriter:
                 os.makedirs(basedir)
             fname = os.path.join(basedir, "%s-meta.pk" % (label))
             with open(fname, "wb") as f:
-                pickle.dump(self.minmax_node_feature, f)
-                pickle.dump(self.minmax_graph_feature, f)
                 pickle.dump(ntotal, f)
                 pickle.dump(use_subdir, f)
                 pickle.dump(nmax_persubdir, f)
+                pickle.dump(attrs, f)
         comm.Barrier()
 
         if use_subdir:

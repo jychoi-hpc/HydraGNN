@@ -14,6 +14,7 @@ from hydragnn.preprocess.utils import check_if_graph_size_variable
 from hydragnn.utils.model import calculate_PNA_degree
 from hydragnn.utils import print_distributed
 import time
+import torch
 
 
 def update_config(config, train_loader, val_loader, test_loader):
@@ -38,7 +39,15 @@ def update_config(config, train_loader, val_loader, test_loader):
 
     max_neigh = config["NeuralNetwork"]["Architecture"]["max_neighbours"]
     if config["NeuralNetwork"]["Architecture"]["model_type"] == "PNA":
-        deg = calculate_PNA_degree(train_loader, max_neigh)
+        if "trainset_pna_deg" in config["Dataset"]:
+            deg_bincount = torch.tensor(config["Dataset"]["trainset_pna_deg"])
+            deg = torch.zeros(max_neigh + 1, dtype=torch.long)
+            if len(deg) < len(deg_bincount):
+                deg[:] = deg_bincount[: len(deg)]
+            else:
+                deg[: len(deg_bincount)] = deg_bincount[:]
+        else:
+            deg = calculate_PNA_degree(train_loader, max_neigh)
         config["NeuralNetwork"]["Architecture"]["pna_deg"] = deg.tolist()
     else:
         config["NeuralNetwork"]["Architecture"]["pna_deg"] = None

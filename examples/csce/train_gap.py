@@ -25,6 +25,7 @@ from hydragnn.utils.smiles_utils import (
     get_node_attribute_name,
     generate_graphdata_from_smilestr,
 )
+from hydragnn.preprocess.utils import gather_deg
 import hydragnn.utils.tracer as tr
 
 import numpy as np
@@ -280,37 +281,41 @@ if __name__ == "__main__":
                 )
                 dataset_lists[idataset].append(data)
 
+        trainset = dataset_lists[0]
+        valset = dataset_lists[1]
+        testset = dataset_lists[2]
+
+        deg = gather_deg(trainset)
+        config["Dataset"]["trainset_pna_deg"] = deg
+
         ## local data
         if args.format == "pickle":
             basedir = os.path.join(os.path.dirname(__file__), "dataset", "pickle")
-            _trainset = dataset_lists[0]
-            _valset = dataset_lists[1]
-            _testset = dataset_lists[2]
+            attrs = dict()
+            attrs["trainset_pna_deg"] = deg
             SimplePickleWriter(
-                _trainset,
+                trainset,
                 basedir,
                 "trainset",
+                attrs=attrs,
             )
             SimplePickleWriter(
-                _valset,
+                valset,
                 basedir,
                 "valset",
             )
             SimplePickleWriter(
-                _testset,
+                testset,
                 basedir,
                 "testset",
             )
 
         if args.format == "adios":
-            _trainset = dataset_lists[0]
-            _valset = dataset_lists[1]
-            _testset = dataset_lists[2]
-
             adwriter = AdiosWriter("examples/csce/dataset/csce_gap.bp", comm)
-            adwriter.add("trainset", _trainset)
-            adwriter.add("valset", _valset)
-            adwriter.add("testset", _testset)
+            adwriter.add("trainset", trainset)
+            adwriter.add("valset", valset)
+            adwriter.add("testset", testset)
+            adwriter.add_global("trainset_pna_deg", deg)
             adwriter.save()
 
         sys.exit(0)
@@ -349,6 +354,7 @@ if __name__ == "__main__":
         trainset = SimplePickleDataset(basedir, "trainset")
         valset = SimplePickleDataset(basedir, "valset")
         testset = SimplePickleDataset(basedir, "testset")
+        trainset_pna_deg = trainset.trainset_pna_deg
         if args.dataset == "distds":
             for dataset in (trainset, valset, testset):
                 rx = list(nsplit(range(len(dataset)), comm_size))[rank]
@@ -357,6 +363,7 @@ if __name__ == "__main__":
             trainset = DistDataset(trainset, "trainset", **opt)
             valset = DistDataset(valset, "valset", **opt)
             testset = DistDataset(testset, "testset", **opt)
+            trainset.trainset_pna_deg = trainset_pna_deg
     else:
         raise NotImplementedError("No supported format: %s" % (args.format))
 
@@ -370,7 +377,11 @@ if __name__ == "__main__":
         trainset, valset, testset, config["NeuralNetwork"]["Training"]["batch_size"]
     )
 
+    if hasattr(trainset, "trainset_pna_deg"):
+        config["Dataset"]["trainset_pna_deg"] = trainset.trainset_pna_deg
     config = hydragnn.utils.update_config(config, train_loader, val_loader, test_loader)
+    if "trainset_pna_deg" in config["Dataset"]:
+        del config["Dataset"]["trainset_pna_deg"]
 
     with open(os.path.join("logs", log_name, "config.json"), "w") as f:
         json.dump(config, f)

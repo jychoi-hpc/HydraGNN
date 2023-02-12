@@ -23,6 +23,7 @@ from hydragnn.utils.model import print_model
 from hydragnn.utils.rawdataset import LSMSDataset
 from hydragnn.utils.distdataset import DistDataset
 from hydragnn.utils.pickledataset import SimplePickleWriter, SimplePickleDataset
+from hydragnn.preprocess.utils import gather_deg
 
 import numpy as np
 
@@ -236,6 +237,9 @@ if __name__ == "__main__":
         )
         print(len(total), len(trainset), len(valset), len(testset))
 
+        deg = gather_deg(trainset)
+        config["Dataset"]["trainset_pna_deg"] = deg
+
         fname = os.path.join(os.path.dirname(__file__), "./dataset/%s.bp" % modelname)
         adwriter = AdiosWriter(fname, comm)
         adwriter.add("trainset", trainset)
@@ -243,29 +247,29 @@ if __name__ == "__main__":
         adwriter.add("testset", testset)
         adwriter.add_global("minmax_node_feature", total.minmax_node_feature)
         adwriter.add_global("minmax_graph_feature", total.minmax_graph_feature)
+        adwriter.add_global("trainset_pna_deg", deg)
         adwriter.save()
 
         basedir = os.path.join(os.path.dirname(__file__), "dataset", "pickle")
+        attrs = dict()
+        attrs["minmax_node_feature"] = total.minmax_node_feature
+        attrs["minmax_graph_feature"] = total.minmax_graph_feature
+        attrs["trainset_pna_deg"] = deg
         SimplePickleWriter(
             trainset,
             basedir,
             "trainset",
-            minmax_node_feature=total.minmax_node_feature,
-            minmax_graph_feature=total.minmax_graph_feature,
+            attrs=attrs,
         )
         SimplePickleWriter(
             valset,
             basedir,
             "valset",
-            minmax_node_feature=total.minmax_node_feature,
-            minmax_graph_feature=total.minmax_graph_feature,
         )
         SimplePickleWriter(
             testset,
             basedir,
             "testset",
-            minmax_node_feature=total.minmax_node_feature,
-            minmax_graph_feature=total.minmax_graph_feature,
         )
         sys.exit(0)
 
@@ -292,6 +296,7 @@ if __name__ == "__main__":
         testset = SimplePickleDataset(basedir, "testset")
         minmax_node_feature = trainset.minmax_node_feature
         minmax_graph_feature = trainset.minmax_graph_feature
+        trainset_pna_deg = trainset.trainset_pna_deg
         if args.distds:
             for dataset in (trainset, valset, testset):
                 rx = list(nsplit(range(len(dataset)), comm_size))[rank]
@@ -302,6 +307,7 @@ if __name__ == "__main__":
             testset = DistDataset(testset, "testset", **opt)
             trainset.minmax_node_feature = minmax_node_feature
             trainset.minmax_graph_feature = minmax_graph_feature
+            trainset.trainset_pna_deg = trainset_pna_deg
 
     info(
         "trainset,valset,testset size: %d %d %d"
@@ -324,9 +330,13 @@ if __name__ == "__main__":
     config["NeuralNetwork"]["Variables_of_interest"][
         "minmax_graph_feature"
     ] = trainset.minmax_graph_feature
+    if hasattr(trainset, "trainset_pna_deg"):
+        config["Dataset"]["trainset_pna_deg"] = trainset.trainset_pna_deg
     config = hydragnn.utils.update_config(config, train_loader, val_loader, test_loader)
     del config["NeuralNetwork"]["Variables_of_interest"]["minmax_node_feature"]
     del config["NeuralNetwork"]["Variables_of_interest"]["minmax_graph_feature"]
+    if "trainset_pna_deg" in config["Dataset"]:
+        del config["Dataset"]["trainset_pna_deg"]
 
     verbosity = config["Verbosity"]["level"]
     model = hydragnn.models.create_model_config(

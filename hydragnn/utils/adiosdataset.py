@@ -292,6 +292,8 @@ class AdiosDataset(torch.utils.data.Dataset):
                 self.minmax_node_feature = f.read_attribute(
                     "minmax_node_feature"
                 ).reshape((2, -1))
+            if "trainset_pna_deg" in self.attrs:
+                self.trainset_pna_deg = f.read_attribute("trainset_pna_deg")
 
             self.variable_count = dict()
             self.variable_offset = dict()
