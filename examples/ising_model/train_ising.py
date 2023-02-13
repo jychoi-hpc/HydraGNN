@@ -76,11 +76,15 @@ def create_dataset_mpi(
     count_config = 0
     rx = list(nsplit(range(0, L ** 3), comm_size))[rank]
     info("rx", rx.start, rx.stop)
+    for num_downs in range(rx.start, rx.stop):
+        subdir = os.path.join(dir, str(num_downs))
+        os.makedirs(subdir, exist_ok=True)
 
     for num_downs in iterate_tqdm(
         range(rx.start, rx.stop), verbosity_level=2, desc="Creating dataset"
     ):
         prefix = "output_%d_" % num_downs
+        subdir = os.path.join(dir, str(num_downs))
 
         primal_configuration = np.ones((L ** 3,))
         for down in range(0, num_downs):
@@ -96,7 +100,9 @@ def create_dataset_mpi(
                     config, L, spin_function, scale_spin
                 )
 
-                write_to_file(total_energy, atomic_features, count_config, dir, prefix)
+                write_to_file(
+                    total_energy, atomic_features, count_config, subdir, prefix
+                )
 
                 count_config = count_config + 1
 
@@ -110,7 +116,9 @@ def create_dataset_mpi(
                     config, L, spin_function, scale_spin
                 )
 
-                write_to_file(total_energy, atomic_features, count_config, dir, prefix)
+                write_to_file(
+                    total_energy, atomic_features, count_config, subdir, prefix
+                )
 
                 count_config = count_config + 1
 
