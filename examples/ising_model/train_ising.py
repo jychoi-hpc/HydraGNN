@@ -360,6 +360,8 @@ if __name__ == "__main__":
     del config["NeuralNetwork"]["Variables_of_interest"]["minmax_graph_feature"]
     if "trainset_pna_deg" in config["Dataset"]:
         del config["Dataset"]["trainset_pna_deg"]
+    ## Good to sync with everyone right after DDStore setup
+    comm.Barrier()
 
     verbosity = config["Verbosity"]["level"]
     model = hydragnn.models.create_model_config(
