@@ -24,6 +24,8 @@ except ImportError:
 
 import hydragnn.utils.tracer as tr
 
+from hydragnn.utils.basedataset import BaseDataset
+
 
 def nsplit(a, n):
     k, m = divmod(len(a), n)
@@ -83,6 +85,8 @@ class AdiosWriter:
             self.dataset[label].extend(data)
         elif isinstance(data, torch_geometric.data.Data):
             self.dataset[label].append(data)
+        elif isinstance(data, BaseDataset):
+            self.dataset[label] = data
         else:
             raise Exception("Unsuppored data type yet.")
 

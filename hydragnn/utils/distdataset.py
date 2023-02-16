@@ -81,6 +81,7 @@ class DistDataset(BaseDataset):
                     val.dtype,
                     val.shape,
                     val.sum(),
+                    (val.size * val.itemsize) / 1024 / 1024 / 1024,
                 ),
             )
 
