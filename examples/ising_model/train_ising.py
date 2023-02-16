@@ -320,6 +320,22 @@ if __name__ == "__main__":
         minmax_node_feature = trainset.minmax_node_feature
         minmax_graph_feature = trainset.minmax_graph_feature
         trainset_pna_deg = trainset.trainset_pna_deg
+
+        ## WIP: temporary
+        for dataset in (trainset, valset, testset):
+            rx = list(nsplit(range(len(dataset)), comm_size))[rank]
+            dataset.setsubset(rx)
+        fname = os.path.join(os.path.dirname(__file__), "./dataset/%s.bp" % modelname)
+        adwriter = AdiosWriter(fname, comm)
+        adwriter.add("trainset", trainset)
+        adwriter.add("valset", valset)
+        adwriter.add("testset", testset)
+        adwriter.add_global("minmax_node_feature", minmax_node_feature)
+        adwriter.add_global("minmax_graph_feature", minmax_graph_feature)
+        adwriter.add_global("trainset_pna_deg", trainset_pna_deg)
+        adwriter.save()
+        sys.exit(0)
+
         if args.distds:
             for dataset in (trainset, valset, testset):
                 rx = list(nsplit(range(len(dataset)), comm_size))[rank]
@@ -331,19 +347,6 @@ if __name__ == "__main__":
             trainset.minmax_node_feature = minmax_node_feature
             trainset.minmax_graph_feature = minmax_graph_feature
             trainset.trainset_pna_deg = trainset_pna_deg
-
-            ## WIP: temporary
-            fname = os.path.join(
-                os.path.dirname(__file__), "./dataset/%s.bp" % modelname
-            )
-            adwriter = AdiosWriter(fname, comm)
-            adwriter.add("trainset", trainset)
-            adwriter.add("valset", valset)
-            adwriter.add("testset", testset)
-            adwriter.add_global("minmax_node_feature", minmax_node_feature)
-            adwriter.add_global("minmax_graph_feature", minmax_graph_feature)
-            adwriter.add_global("trainset_pna_deg", trainset_pna_deg)
-            adwriter.save()
 
     info(
         "trainset,valset,testset size: %d %d %d"
