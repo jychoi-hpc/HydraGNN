@@ -303,6 +303,7 @@ class AdiosDataset(torch.utils.data.Dataset):
             self.variable_offset = dict()
             self.variable_dim = dict()
 
+            nbytes = 0
             for k in self.keys:
                 self.variable_count[k] = f.read("%s/%s/variable_count" % (label, k))
                 self.variable_offset[k] = f.read("%s/%s/variable_offset" % (label, k))
@@ -394,8 +395,12 @@ class AdiosDataset(torch.utils.data.Dataset):
                             self.data[k].sum(),
                         ),
                     )
+                    nbytes += self.data[k].size * self.data[k].itemsize
             t2 = time.time()
             log("Adios reading time (sec): ", (t2 - t0))
+            if self.distds:
+                log("DDStore total (GB):", nbytes / 1024 / 1024 / 1024)
+
         t1 = time.time()
         log("Data loading time (sec): ", (t1 - t0))
 
