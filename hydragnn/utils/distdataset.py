@@ -42,6 +42,7 @@ class DistDataset(BaseDataset):
         self.variable_count = dict()
         self.variable_offset = dict()
         self.data = dict()
+        nbytes = 0
         for k in self.keys:
             arr_list = [data[k].cpu().numpy() for data in self.dataset]
             m0 = np.min([x.shape for x in arr_list], axis=0)
@@ -84,6 +85,8 @@ class DistDataset(BaseDataset):
                     (val.size * val.itemsize) / 1024 / 1024 / 1024,
                 ),
             )
+            nbytes += val.size * val.itemsize
+        log("DDStore total (GB):", nbytes / 1024 / 1024 / 1024)
 
     def len(self):
         return self.total_ns
