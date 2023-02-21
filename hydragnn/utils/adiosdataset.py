@@ -99,7 +99,18 @@ class AdiosWriter:
         self.writer = self.io.Open(self.filename, ad2.Mode.Write, self.comm)
         total_ns = 0
         for label in self.dataset:
-            if len(self.dataset[label]) < 1:
+            if len(self.dataset[label]) == 0:
+                ## If there is no data to save, simply do empty operations
+                ns = self.comm.allgather(len(self.dataset[label]))
+
+                keys_list = self.comm.allgather([])
+                for keys in keys_list:
+                    if len(keys) > 0:
+                        break
+
+                for k in keys:
+                    shape_list = self.comm.allgather([])
+
                 continue
             ns = self.comm.allgather(len(self.dataset[label]))
             ns_offset = sum(ns[: self.rank])
@@ -111,6 +122,7 @@ class AdiosWriter:
                 data = self.dataset[label][0]
                 self.io.DefineAttribute("%s/keys" % label, data.keys)
                 keys = sorted(data.keys)
+                self.comm.allgather(keys)
 
             for k in keys:
                 arr_list = [data[k].cpu().numpy() for data in self.dataset[label]]
@@ -132,10 +144,12 @@ class AdiosWriter:
                     0,
                 ] * len(val.shape)
                 for i in range(self.rank):
-                    offset[vdim] += shape_list[i][vdim]
+                    if shape_list[i]:
+                        offset[vdim] += shape_list[i][vdim]
                 global_shape = shape_list[0]
                 for i in range(1, self.size):
-                    global_shape[vdim] += shape_list[i][vdim]
+                    if shape_list[i]:
+                        global_shape[vdim] += shape_list[i][vdim]
                 # log ("k,val shape", k, global_shape, offset, val.shape)
                 var = self.io.DefineVariable(
                     "%s/%s" % (label, k),
