@@ -68,10 +68,19 @@ def write_to_file(total_energy, atomic_features, count_config, dir, prefix):
 
 
 def create_dataset_mpi(
-    L, histogram_cutoff, dir, spin_function=lambda x: x, scale_spin=False, comm=None
+    L,
+    histogram_cutoff,
+    dir,
+    spin_function=lambda x: x,
+    scale_spin=False,
+    comm=None,
+    seed=43,
 ):
     rank = comm.Get_rank()
     comm_size = comm.Get_size()
+
+    if seed is not None:
+        np.random.seed(seed)
 
     count_config = 0
     rx = list(nsplit(range(0, L ** 3), comm_size))[rank]
