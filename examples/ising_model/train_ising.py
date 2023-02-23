@@ -74,7 +74,7 @@ def create_dataset_mpi(
     spin_function=lambda x: x,
     scale_spin=False,
     comm=None,
-    seed=43,
+    seed=None,
 ):
     rank = comm.Get_rank()
     comm_size = comm.Get_size()
@@ -160,6 +160,7 @@ if __name__ == "__main__":
         default=1000,
         help="configurational_histogram_cutoff",
     )
+    parser.add_argument("--seed", type=int, help="seed", default=43)
     parser.add_argument("--sampling", type=float, help="sampling ratio", default=None)
     parser.add_argument("--distds", action="store_true", help="distds dataset")
     parser.add_argument("--distds_nsplit", type=int, help="distds nsplit", default=1)
@@ -247,6 +248,7 @@ if __name__ == "__main__":
             spin_function=spin_func,
             scale_spin=True,
             comm=comm,
+            seed=args.seed,
         )
         comm.Barrier()
 
