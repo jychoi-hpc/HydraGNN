@@ -265,16 +265,6 @@ if __name__ == "__main__":
         deg = gather_deg(trainset)
         config["Dataset"]["trainset_pna_deg"] = deg
 
-        fname = os.path.join(os.path.dirname(__file__), "./dataset/%s.bp" % modelname)
-        adwriter = AdiosWriter(fname, comm)
-        adwriter.add("trainset", trainset)
-        adwriter.add("valset", valset)
-        adwriter.add("testset", testset)
-        adwriter.add_global("minmax_node_feature", total.minmax_node_feature)
-        adwriter.add_global("minmax_graph_feature", total.minmax_graph_feature)
-        adwriter.add_global("trainset_pna_deg", deg)
-        adwriter.save()
-
         basedir = os.path.join(
             os.path.dirname(__file__), "dataset", "%s.pickle" % modelname
         )
@@ -301,6 +291,17 @@ if __name__ == "__main__":
             "testset",
             use_subdir=True,
         )
+
+        fname = os.path.join(os.path.dirname(__file__), "./dataset/%s.bp" % modelname)
+        adwriter = AdiosWriter(fname, comm)
+        adwriter.add("trainset", trainset)
+        adwriter.add("valset", valset)
+        adwriter.add("testset", testset)
+        adwriter.add_global("minmax_node_feature", total.minmax_node_feature)
+        adwriter.add_global("minmax_graph_feature", total.minmax_graph_feature)
+        adwriter.add_global("trainset_pna_deg", deg)
+        adwriter.save()
+
         sys.exit(0)
 
     tr.initialize()
