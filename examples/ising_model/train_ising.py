@@ -142,7 +142,9 @@ def nsplit(a, n):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
     parser.add_argument(
         "--preonly",
         action="store_true",
@@ -163,7 +165,7 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, help="seed", default=43)
     parser.add_argument("--sampling", type=float, help="sampling ratio", default=None)
     parser.add_argument("--distds", action="store_true", help="distds dataset")
-    parser.add_argument("--distds_nsplit", type=int, help="distds nsplit", default=1)
+    parser.add_argument("--distds_ncopy", type=int, help="distds ncopy", default=1)
     parser.add_argument("--log", help="log name")
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
@@ -315,7 +317,7 @@ if __name__ == "__main__":
             "preload": False,
             "shmem": False,
             "distds": args.distds,
-            "distds_nsplit": args.distds_nsplit,
+            "distds_ncopy": args.distds_ncopy,
         }
         fname = os.path.join(os.path.dirname(__file__), "./dataset/%s.bp" % modelname)
         trainset = AdiosDataset(fname, "trainset", comm, **opt)

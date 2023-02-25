@@ -225,7 +225,7 @@ class AdiosDataset(torch.utils.data.Dataset):
         shmem=False,
         enable_cache=False,
         distds=False,
-        distds_nsplit=1,
+        distds_ncopy=1,
     ):
         """
         Parameters
@@ -283,10 +283,10 @@ class AdiosDataset(torch.utils.data.Dataset):
         self.cache = dict()
         self.ddstore = None
         self.distds = distds
-        self.distds_nsplit = distds_nsplit
+        self.distds_ncopy = distds_ncopy
         if self.distds:
             self.ddstore_comm = self.comm.Split(
-                self.rank // self.distds_nsplit, self.rank
+                self.rank // self.distds_ncopy, self.rank
             )
             self.ddstore_comm_rank = self.ddstore_comm.Get_rank()
             self.ddstore_comm_size = self.ddstore_comm.Get_size()
