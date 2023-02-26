@@ -14,29 +14,40 @@ except ImportError:
 from hydragnn.utils.print_utils import log
 
 
+def nsplit(a, n):
+    k, m = divmod(len(a), n)
+    return (a[i * k + min(i, m) : (i + 1) * k + min(i + 1, m)] for i in range(n))
+
+
 class DistDataset(BaseDataset):
     """Distributed dataset class"""
 
-    def __init__(self, data, label, comm=MPI.COMM_WORLD):
+    def __init__(self, data, label, comm=MPI.COMM_WORLD, distds_ncopy=1):
         """
         data: dataset in memory
         """
         super().__init__()
 
-        if isinstance(data, list):
-            self.dataset.extend(data)
-        else:
-            self.dataset.extend(list(data))
-
         self.label = label
         self.comm = comm
-        self.rank = comm.Get_rank()
-        self.comm_size = comm.Get_size()
-        self.ddstore = dds.PyDDStore(comm)
+        self.rank = self.comm.Get_rank()
+        self.comm_size = self.comm.Get_size()
+        self.distds_ncopy = distds_ncopy
+        self.nrank_per_group = self.comm_size // self.distds_ncopy
+        self.ddstore_comm = self.comm.Split(
+            self.rank // self.nrank_per_group, self.rank
+        )
+        self.ddstore_comm_rank = self.ddstore_comm.Get_rank()
+        self.ddstore_comm_size = self.ddstore_comm.Get_size()
+        self.ddstore = dds.PyDDStore(self.ddstore_comm)
 
-        ns = self.comm.allgather(len(self.dataset))
-        ns_offset = sum(ns[: self.rank])
-        self.total_ns = sum(ns)
+        ## set total before set subset
+        self.total_ns = len(data)
+        rx = list(nsplit(range(len(data)), self.ddstore_comm_size))[
+            self.ddstore_comm_rank
+        ]
+        for i in rx:
+            self.dataset.append(data[i])
 
         self.keys = sorted(self.dataset[0].keys)
         self.variable_shape = dict()
@@ -68,7 +79,7 @@ class DistDataset(BaseDataset):
 
             vcount = np.array([x.shape[vdim] for x in arr_list])
             assert len(vcount) == len(self.dataset)
-            vcount_list = self.comm.allgather(vcount)
+            vcount_list = self.ddstore_comm.allgather(vcount)
             vcount = np.hstack(vcount_list)
             self.variable_count[k] = vcount
 
