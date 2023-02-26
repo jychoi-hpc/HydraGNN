@@ -139,6 +139,7 @@ class AdiosWriter:
                     vdim = vdims[0]
                 val = np.concatenate(arr_list, axis=vdim)
                 assert val.data.contiguous
+
                 shape_list = self.comm.allgather(list(val.shape))
                 offset = [
                     0,
@@ -284,9 +285,10 @@ class AdiosDataset(torch.utils.data.Dataset):
         self.ddstore = None
         self.distds = distds
         self.distds_ncopy = distds_ncopy
+        self.nrank_per_group = self.comm_size // self.distds_ncopy
         if self.distds:
             self.ddstore_comm = self.comm.Split(
-                self.rank // self.distds_ncopy, self.rank
+                self.rank // self.nrank_per_group, self.rank
             )
             self.ddstore_comm_rank = self.ddstore_comm.Get_rank()
             self.ddstore_comm_size = self.ddstore_comm.Get_size()
