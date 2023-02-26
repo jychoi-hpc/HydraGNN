@@ -60,7 +60,9 @@ def info(*args, logtype="info", sep=" "):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
     parser.add_argument(
         "--loadexistingsplit",
         action="store_true",
@@ -76,6 +78,7 @@ if __name__ == "__main__":
         action="store_true",
         help="distds dataset",
     )
+    parser.add_argument("--distds_ncopy", type=int, help="distds ncopy", default=1)
     parser.add_argument(
         "--inputfile", help="input file", type=str, default="zeolite.json"
     )

@@ -351,12 +351,7 @@ if __name__ == "__main__":
         # sys.exit(0)
 
         if args.distds:
-            # for dataset in (trainset, valset, testset):
-            #     rx = list(nsplit(range(len(dataset)), comm_size))[rank]
-            #     dataset.setsubset(rx)
-            opt = {
-                "distds_ncopy": args.distds_ncopy,
-            }
+            opt = {"distds_ncopy": args.distds_ncopy}
             trainset = DistDataset(trainset, "trainset", comm, **opt)
             valset = DistDataset(valset, "valset", comm, **opt)
             testset = DistDataset(testset, "testset", comm, **opt)

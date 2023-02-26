@@ -149,7 +149,9 @@ class CSCEDataset(torch.utils.data.Dataset):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
     parser.add_argument("inputfilesubstr", help="input file substr")
     parser.add_argument("--sampling", type=float, help="sampling ratio", default=None)
     parser.add_argument(
@@ -158,6 +160,7 @@ if __name__ == "__main__":
         help="preprocess only (no training)",
     )
     parser.add_argument("--mae", action="store_true", help="do mae calculation")
+    parser.add_argument("--distds_ncopy", type=int, help="distds ncopy", default=1)
 
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
@@ -356,13 +359,10 @@ if __name__ == "__main__":
         testset = SimplePickleDataset(basedir, "testset")
         trainset_pna_deg = trainset.trainset_pna_deg
         if args.dataset == "distds":
-            for dataset in (trainset, valset, testset):
-                rx = list(nsplit(range(len(dataset)), comm_size))[rank]
-                dataset.setsubset(rx)
-            opt = {}
-            trainset = DistDataset(trainset, "trainset", **opt)
-            valset = DistDataset(valset, "valset", **opt)
-            testset = DistDataset(testset, "testset", **opt)
+            opt = {"distds_ncopy": args.distds_ncopy}
+            trainset = DistDataset(trainset, "trainset", comm, **opt)
+            valset = DistDataset(valset, "valset", comm, **opt)
+            testset = DistDataset(testset, "testset", comm, **opt)
             trainset.trainset_pna_deg = trainset_pna_deg
     else:
         raise NotImplementedError("No supported format: %s" % (args.format))

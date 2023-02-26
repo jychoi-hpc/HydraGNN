@@ -165,7 +165,9 @@ class OGBRawDataset(torch.utils.data.Dataset):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
     parser.add_argument("inputfilesubstr", help="input file substr")
     parser.add_argument("--sampling", type=float, help="sampling ratio", default=None)
     parser.add_argument(

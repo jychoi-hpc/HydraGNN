@@ -246,7 +246,9 @@ class DFTBDataset(BaseDataset):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
     parser.add_argument("--sampling", type=float, help="sampling ratio", default=None)
     parser.add_argument(
         "--preonly",
@@ -402,13 +404,10 @@ if __name__ == "__main__":
         # minmax_graph_feature = trainset.minmax_graph_feature
         trainset_pna_deg = trainset.trainset_pna_deg
         if args.distds:
-            for dataset in (trainset, valset, testset):
-                rx = list(nsplit(range(len(dataset)), comm_size))[rank]
-                dataset.setsubset(rx)
-            opt = {}
-            trainset = DistDataset(trainset, "trainset", **opt)
-            valset = DistDataset(valset, "valset", **opt)
-            testset = DistDataset(testset, "testset", **opt)
+            opt = {"distds_ncopy": args.distds_ncopy}
+            trainset = DistDataset(trainset, "trainset", comm, **opt)
+            valset = DistDataset(valset, "valset", comm, **opt)
+            testset = DistDataset(testset, "testset", comm, **opt)
             # trainset.minmax_node_feature = minmax_node_feature
             # trainset.minmax_graph_feature = minmax_graph_feature
             trainset.trainset_pna_deg = trainset_pna_deg
