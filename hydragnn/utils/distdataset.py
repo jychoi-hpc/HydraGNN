@@ -18,6 +18,9 @@ class DistDataset(BaseDataset):
     """Distributed dataset class"""
 
     def __init__(self, data, label, comm=MPI.COMM_WORLD):
+        """
+        data: dataset in memory
+        """
         super().__init__()
 
         if isinstance(data, list):
@@ -47,10 +50,17 @@ class DistDataset(BaseDataset):
             arr_list = [data[k].cpu().numpy() for data in self.dataset]
             m0 = np.min([x.shape for x in arr_list], axis=0)
             m1 = np.max([x.shape for x in arr_list], axis=0)
-            wh = np.where(m0 != m1)[0]
-            assert len(wh) < 2
-            vdim = wh[0] if len(wh) == 1 else 1
-            val = np.concatenate(arr_list, axis=vdim).copy()
+            vdims = list()
+            for i in range(len(m0)):
+                if m0[i] != m1[i]:
+                    vdims.append(i)
+            ## We can handle only single variable dimension.
+            assert len(vdims) < 2
+            vdim = 0
+            if len(vdims) > 0:
+                vdim = vdims[0]
+            val = np.concatenate(arr_list, axis=vdim)
+            assert val.data.contiguous
 
             self.variable_shape[k] = val.shape
             self.variable_dim[k] = vdim
