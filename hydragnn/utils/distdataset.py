@@ -15,12 +15,22 @@ from hydragnn.utils.print_utils import log
 from hydragnn.utils import nsplit
 
 import hydragnn.utils.tracer as tr
+import pickle
 
 
 class DistDataset(AbstractBaseDataset):
     """Distributed dataset class"""
 
-    def __init__(self, data, label, comm=MPI.COMM_WORLD, ddstore_width=None):
+    def __init__(
+        self,
+        data,
+        label,
+        comm=MPI.COMM_WORLD,
+        ddstore_width=None,
+        ddstore_version=1,
+        use_mq=False,
+        role=1,
+    ):
         super().__init__()
 
         self.label = label
@@ -33,7 +43,7 @@ class DistDataset(AbstractBaseDataset):
         self.ddstore_comm = self.comm.Split(self.rank // self.ddstore_width, self.rank)
         self.ddstore_comm_rank = self.ddstore_comm.Get_rank()
         self.ddstore_comm_size = self.ddstore_comm.Get_size()
-        self.ddstore = dds.PyDDStore(self.ddstore_comm)
+        self.ddstore = dds.PyDDStore(self.ddstore_comm, use_mq=use_mq, role=role)
 
         ## set total before set subset
         self.total_ns = len(data)
@@ -42,6 +52,13 @@ class DistDataset(AbstractBaseDataset):
         ]
         for i in rx:
             self.dataset.append(data[i])
+
+        self.ddstore_version = ddstore_version
+        self.use_mq = use_mq
+        self.role = role
+        if ddstore_version == 2:
+            self.ddstore.add(label, self.dataset)
+            return
 
         self.keys = sorted(self.dataset[0].keys)
         self.variable_shape = dict()
@@ -108,6 +125,12 @@ class DistDataset(AbstractBaseDataset):
 
     @tr.profile("get")
     def get(self, idx):
+        if self.ddstore_version == 2:
+            data_object = self.ddstore.get(
+                self.label, idx, decoder=lambda x: pickle.loads(x)
+            )
+            return data_object
+
         data_object = torch_geometric.data.Data()
         for k in self.keys:
             count = list(self.variable_shape[k])
