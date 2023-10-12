@@ -207,7 +207,7 @@ if __name__ == "__main__":
 
     log("Command: {0}\n".format(" ".join([x for x in sys.argv])), rank=0)
 
-    modelname = "dftb_smooth_uv_spectrum"
+    modelname = "dftb_smooth_uv_spectrum-small"
     if args.preonly:
         ## local data
         total = DFTBDataset(
@@ -299,7 +299,7 @@ if __name__ == "__main__":
         # minmax_graph_feature = trainset.minmax_graph_feature
         pna_deg = trainset.pna_deg
         if args.ddstore:
-            opt = {"ddstore_width": args.ddstore_width}
+            opt = {"ddstore_version": 2, "ddstore_width": args.ddstore_width}
             trainset = DistDataset(trainset, "trainset", comm, **opt)
             valset = DistDataset(valset, "valset", comm, **opt)
             testset = DistDataset(testset, "testset", comm, **opt)

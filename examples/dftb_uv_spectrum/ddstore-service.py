@@ -35,14 +35,14 @@ if __name__ == "__main__":
         dest="role",
         const="consumer",
     )
-    parser.set_defaults(role="producer")
+    parser.set_defaults(role="consumer")
     args = parser.parse_args()
 
     role = 1 if args.role == "consumer" else 0  ## 0: producer, 1: consumer
     opt = {
         "ddstore_width": args.width,
         "ddstore_version": 2,
-        "use_mq": True,
+        "use_mq": False,
         "role": role,
     }
 
@@ -58,7 +58,8 @@ if __name__ == "__main__":
         for i in range(len(trainset)):
             print("get:", i)
             trainset.get(i)
-        trainset.get(-1)
+        comm.Barrier()
+        #trainset.get(-1)
     else:
         while True:
             rtn = trainset.get(0)
