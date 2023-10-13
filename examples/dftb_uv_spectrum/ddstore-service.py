@@ -12,6 +12,7 @@ from hydragnn.utils.adiosdataset import AdiosDataset
 from hydragnn.utils.distdataset import DistDataset
 from hydragnn.utils.pickledataset import SimplePickleDataset
 import hydragnn.utils.tracer as tr
+import time
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -42,7 +43,7 @@ if __name__ == "__main__":
     opt = {
         "ddstore_width": args.width,
         "ddstore_version": 2,
-        "use_mq": False,
+        "use_mq": args.mq,
         "role": role,
     }
 
@@ -52,19 +53,32 @@ if __name__ == "__main__":
     print("trainset size: %d" % len(trainset))
 
     comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()
     comm.Barrier()
 
     if role == 1:
+        t = 0
         for i in range(len(trainset)):
-            print("get:", i)
+            print(">>> [%d] consumer asking ... %d"%(rank, i))
+            t0 = time.time()
             trainset.get(i)
+            t1 = time.time()
+            print(">>> [%d] consumer received: %d (time: %f)"%(rank, i, t1-t0))
+            t += (t1-t0)
+        print("[%d] consumer done. (avg: %f)"%(rank, t/len(trainset)))
         comm.Barrier()
-        #trainset.get(-1)
     else:
+        trainset.ddstore.epoch_begin()
+        cnt = 0;
         while True:
+            print(">>> [%d] producer waiting ..."%(rank))
             rtn = trainset.get(0)
-            print(rtn)
-            if rtn == -1:
-                break
-
+            print(">>> [%d] producer responded."%(rank))
+            cnt += 1
+            """
+            if cnt%500:
+                trainset.ddstore.epoch_end()
+                trainset.ddstore.epoch_begin()
+            """
+        trainset.ddstore.epoch_end()
     sys.exit(0)

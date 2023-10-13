@@ -152,3 +152,8 @@ class DistDataset(AbstractBaseDataset):
             v = torch.tensor(val)
             exec("data_object.%s = v" % (k))
         return data_object
+
+    def __del__(self):
+        if self.ddstore:
+            self.ddstore.free()
+
