@@ -59,26 +59,28 @@ if __name__ == "__main__":
     if role == 1:
         t = 0
         for i in range(len(trainset)):
-            print(">>> [%d] consumer asking ... %d"%(rank, i))
+            print(">>> [%d] consumer asking ... %d" % (rank, i))
             t0 = time.time()
             trainset.get(i)
             t1 = time.time()
-            print(">>> [%d] consumer received: %d (time: %f)"%(rank, i, t1-t0))
-            t += (t1-t0)
-        print("[%d] consumer done. (avg: %f)"%(rank, t/len(trainset)))
+            print(">>> [%d] consumer received: %d (time: %f)" % (rank, i, t1 - t0))
+            t += t1 - t0
+        print("[%d] consumer done. (avg: %f)" % (rank, t / len(trainset)))
         comm.Barrier()
     else:
-        trainset.ddstore.epoch_begin()
-        cnt = 0;
+        # trainset.ddstore.epoch_begin()
+        cnt = 0
         while True:
-            print(">>> [%d] producer waiting ..."%(rank))
+            print(">>> [%d] producer waiting ..." % (rank))
             rtn = trainset.get(0)
-            print(">>> [%d] producer responded."%(rank))
+            print(">>> [%d] producer responded." % (rank))
             cnt += 1
+            # comm.Barrier()
             """
             if cnt%500:
-                trainset.ddstore.epoch_end()
-                trainset.ddstore.epoch_begin()
+                comm.Barrier()
+                #trainset.ddstore.epoch_end()
+                #trainset.ddstore.epoch_begin()
             """
-        trainset.ddstore.epoch_end()
+        # trainset.ddstore.epoch_end()
     sys.exit(0)
