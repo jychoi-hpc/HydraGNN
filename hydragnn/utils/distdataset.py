@@ -7,7 +7,7 @@ import torch_geometric.data
 from hydragnn.utils.abstractbasedataset import AbstractBaseDataset
 
 try:
-    import pyddstore as dds
+    import pyddstore2 as dds
 except ImportError:
     pass
 
@@ -27,9 +27,9 @@ class DistDataset(AbstractBaseDataset):
         label,
         comm=MPI.COMM_WORLD,
         ddstore_width=None,
-        ddstore_version=1,
         use_mq=False,
         role=1,
+        mode=0,
     ):
         super().__init__()
 
@@ -43,117 +43,44 @@ class DistDataset(AbstractBaseDataset):
         self.ddstore_comm = self.comm.Split(self.rank // self.ddstore_width, self.rank)
         self.ddstore_comm_rank = self.ddstore_comm.Get_rank()
         self.ddstore_comm_size = self.ddstore_comm.Get_size()
-        self.ddstore = dds.PyDDStore(self.ddstore_comm, use_mq=use_mq, role=role)
+        self.ddstore = dds.PyDDStore(
+            self.ddstore_comm, use_mq=use_mq, role=role, mode=mode
+        )
 
         ## set total before set subset
         self.total_ns = len(data)
+        print("init: total_ns =", self.total_ns)
+
         rx = list(nsplit(range(len(data)), self.ddstore_comm_size))[
             self.ddstore_comm_rank
         ]
         for i in rx:
             self.dataset.append(data[i])
+        print(self.rank, len(self.dataset))
 
-        self.ddstore_version = ddstore_version
+        self.data = list()
+        self.labels = list()
+
         self.use_mq = use_mq
         self.role = role
-        if ddstore_version == 2:
-            self.ddstore.add(label, self.dataset)
-            return
-
-        self.keys = sorted(self.dataset[0].keys)
-        self.variable_shape = dict()
-        self.variable_dim = dict()
-        self.variable_dtype = dict()
-        self.variable_count = dict()
-        self.variable_offset = dict()
-        self.data = dict()
-        nbytes = 0
-        for k in self.keys:
-            arr_list = [data[k].cpu().numpy() for data in self.dataset]
-            m0 = np.min([x.shape for x in arr_list], axis=0)
-            m1 = np.max([x.shape for x in arr_list], axis=0)
-            vdims = list()
-            for i in range(len(m0)):
-                if m0[i] != m1[i]:
-                    vdims.append(i)
-            ## We can handle only single variable dimension.
-            assert len(vdims) < 2
-            vdim = 0
-            if len(vdims) > 0:
-                vdim = vdims[0]
-            val = np.concatenate(arr_list, axis=vdim)
-            assert val.data.contiguous
-
-            self.variable_shape[k] = val.shape
-            self.variable_dim[k] = vdim
-            self.variable_dtype[k] = val.dtype
-
-            vcount = np.array([x.shape[vdim] for x in arr_list])
-            assert len(vcount) == len(self.dataset)
-            vcount_list = self.ddstore_comm.allgather(vcount)
-            vcount = np.hstack(vcount_list)
-            self.variable_count[k] = vcount
-
-            offset_arr = np.zeros_like(vcount)
-            offset_arr[1:] = np.cumsum(vcount)[:-1]
-            self.variable_offset[k] = offset_arr
-
-            if vdim > 0:
-                val = np.moveaxis(val, vdim, 0)
-                val = np.ascontiguousarray(val)
-            assert val.data.contiguous
-            self.data[k] = val
-
-            vname = "%s/%s" % (label, k)
-            self.ddstore.add(vname, val)
-            log(
-                "DDStore add:",
-                (
-                    vname,
-                    vdim,
-                    val.dtype,
-                    val.shape,
-                    val.sum(),
-                    (val.size * val.itemsize) / 1024 / 1024 / 1024,
-                ),
-            )
-            nbytes += val.size * val.itemsize
-        log("DDStore total (GB):", nbytes / 1024 / 1024 / 1024)
+        self.ddstore.add(label, self.dataset)
 
     def len(self):
         return self.total_ns
 
+    def __len__(self):
+        return self.len()
+
     @tr.profile("get")
     def get(self, idx):
-        if self.ddstore_version == 2:
-            data_object = self.ddstore.get(
-                self.label, idx, decoder=lambda x: pickle.loads(x)
-            )
-            return data_object
-
-        data_object = torch_geometric.data.Data()
-        for k in self.keys:
-            count = list(self.variable_shape[k])
-            vdim = self.variable_dim[k]
-            dtype = self.variable_dtype[k]
-            offset = self.variable_offset[k][idx]
-            count[vdim] = self.variable_count[k][idx]
-            val = np.zeros(count, dtype=dtype)
-            ## vdim should be the first dim for DDStore
-            if vdim > 0:
-                val = np.moveaxis(val, vdim, 0)
-                val = np.ascontiguousarray(val)
-                assert val.data.contiguous
-            vname = "%s/%s" % (self.label, k)
-            self.ddstore.get(vname, val, offset)
-            if vdim > 0:
-                val = np.moveaxis(val, 0, vdim)
-                val = np.ascontiguousarray(val)
-            v = torch.tensor(val)
-            exec("data_object.%s = v" % (k))
+        data_object = self.ddstore.get(
+            self.label, idx, decoder=lambda x: pickle.loads(x)
+        )
         return data_object
+
+    def __getitem__(self, idx):
+        return self.get(idx)
 
     def __del__(self):
         if self.ddstore:
             self.ddstore.free()
-

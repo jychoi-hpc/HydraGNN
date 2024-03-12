@@ -126,8 +126,8 @@ def setup_ddp():
     world_size, world_rank = init_comm_size_and_rank()
 
     ## Default setting
-    master_addr = "127.0.0.1"
-    master_port = "8889"
+    master_addr = os.getenv("MASTER_ADDR", "127.0.0.1")
+    master_port = os.getenv("MASTER_PORT", "8889")
 
     if os.getenv("LSB_HOSTS") is not None:
         ## source: https://www.olcf.ornl.gov/wp-content/uploads/2019/12/Scaling-DL-on-Summit.pdf
@@ -167,14 +167,12 @@ def setup_ddp():
 
 
 def get_device_list():
-
     available_gpus = [i for i in range(torch.cuda.device_count())]
 
     return available_gpus
 
 
 def get_device_name(use_gpu=True, rank_per_model=1, verbosity_level=0):
-
     available_gpus = get_device_list()
     if not use_gpu or not available_gpus:
         print_distributed(verbosity_level, "Using CPU")
@@ -207,12 +205,10 @@ def get_device_name(use_gpu=True, rank_per_model=1, verbosity_level=0):
 
 
 def get_device_from_name(name: str):
-
     return torch.device(name)
 
 
 def get_device(use_gpu=True, rank_per_model=1, verbosity_level=0):
-
     name = get_device_name(use_gpu, rank_per_model, verbosity_level)
     return get_device_from_name(name)
 
