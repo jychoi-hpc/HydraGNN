@@ -218,7 +218,7 @@ if __name__ == "__main__":
         type=int,
         default=1,
         metavar="N",
-        help="number of epochs to train (default: 10)",
+        help="number of epochs to train (default: 1)",
     )
     parser.add_argument(
         "--batch-size",
@@ -269,6 +269,9 @@ if __name__ == "__main__":
         var_config["input_node_feature_names"],
         var_config["input_node_feature_dims"],
     ) = get_node_attribute_name(csce_node_types)
+    config["NeuralNetwork"]["Training"]["num_epoch"] = args.epochs
+    config["NeuralNetwork"]["Training"]["batch_size"] = args.batch_size
+
     ##################################################################################################################
     # Always initialize for multi-rank training.
     comm_size, rank = hydragnn.utils.setup_ddp()

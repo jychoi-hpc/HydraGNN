@@ -85,65 +85,66 @@ if __name__ == "__main__":
     valset = SimplePickleDataset(basedir, "valset")
     testset = SimplePickleDataset(basedir, "testset")
     trainset = DistDataset(trainset, "trainset", comm, **opt)
-    trainset = DistDataset(valset, "valset", comm, **opt)
-    trainset = DistDataset(testset, "testset", comm, **opt)
-    print("trainset size: %d" % len(trainset))
+    valset = DistDataset(valset, "valset", comm, **opt)
+    testset = DistDataset(testset, "testset", comm, **opt)
+    print("trainset,valset,testset size: %d %d %d" % (len(trainset), len(valset), len(testset)))
 
-    sampler1 = torch.utils.data.distributed.DistributedSampler(trainset)
-    sampler2 = torch.utils.data.distributed.DistributedSampler(valset)
-    sampler3 = torch.utils.data.distributed.DistributedSampler(testset)
+    trainset_sampler = torch.utils.data.distributed.DistributedSampler(trainset)
+    valset_sampler = torch.utils.data.distributed.DistributedSampler(valset)
+    testset_sampler = torch.utils.data.distributed.DistributedSampler(testset)
 
-    sample_list1 = list()
-    sample_list2 = list()
-    sample_list3 = list()
-    for i in sampler1:
-        sample_list1.append(i)
-    for i in sampler2:
-        sample_list2.append(i)
-    for i in sampler3:
-        sample_list3.append(i)
+    trainset_sample_list = list()
+    valset_sample_list = list()
+    testset_sample_list = list()
+    for i in trainset_sampler:
+        trainset_sample_list.append(i)
+    for i in valset_sampler:
+        valset_sample_list.append(i)
+    for i in testset_sampler:
+        testset_sample_list.append(i)
     print(
         "local size: %d %d %d"
-        % (len(sample_list1), len(sample_list2), len(sample_list3))
+        % (len(trainset_sample_list), len(trainset_sample_list), len(testset_sample_list))
     )
 
     comm.Barrier()
 
     if role == 1:
         for k in range(args.epochs):
+            comm.Barrier()
             t = 0
-            for sample_list in [sample_list1, sample_list2, sample_list3]:
+            for name, dataset, sample_list in zip(["trainset", "valset", "testset"], [trainset, valset, testset], [trainset_sample_list, trainset_sample_list, trainset_sample_list]):
                 for i in sample_list:
                     if mode == 1:
                         i = 0
-                    print(">>> [%d] consumer asking ... %d" % (rank, i))
+                    print(">>> [%d] consumer asking ... %s %d" % (rank, name, i))
                     t0 = time.time()
-                    trainset.__getitem__(i)
+                    dataset.__getitem__(i)
                     t1 = time.time()
                     print(
-                        ">>> [%d] consumer received: %d (time: %f)" % (rank, i, t1 - t0)
+                        ">>> [%d] consumer received: %s %d (time: %f)" % (rank, name, i, t1 - t0)
                     )
                     t += t1 - t0
-                print("[%d] consumer done. (avg: %f)" % (rank, t / len(trainset)))
+                print("[%d] consumer done. (avg: %f)" % (rank, t / len(dataset)))
                 # comm.Barrier()
     else:
         for k in range(args.epochs):
             comm.Barrier()
-            for sample_list in [sample_list1, sample_list2, sample_list3]:
-                trainset.ddstore.epoch_begin()
+            for name, dataset, sample_list in zip(["trainset", "valset", "testset"], [trainset, valset, testset], [trainset_sample_list, trainset_sample_list, trainset_sample_list]):
+                dataset.ddstore.epoch_begin()
                 for seq, i in enumerate(sample_list):
                     if mode == 0:
                         i = 0
                         print(">>> [%d] producer waiting ..." % (rank))
                     else:
-                        print(">>> [%d] producer streaming begin ... %d" % (rank, i))
-                    rtn = trainset.get(i)
+                        print(">>> [%d] producer streaming begin ... %s %d" % (rank, name, i))
+                    rtn = dataset.get(i)
                     if mode == 0:
-                        print(">>> [%d] producer responded." % (rank))
+                        print(">>> [%d] producer responded: %s %d" % (rank, name, i))
                     else:
-                        print(">>> [%d] producer streaming end." % (rank))
+                        print(">>> [%d] producer streaming end: %s %d" % (rank, name, i))
                     if (seq + 1) % args.batch_size == 0:
-                        trainset.ddstore.epoch_end()
-                        trainset.ddstore.epoch_begin()
-                trainset.ddstore.epoch_end()
+                        dataset.ddstore.epoch_end()
+                        dataset.ddstore.epoch_begin()
+                dataset.ddstore.epoch_end()
     sys.exit(0)
