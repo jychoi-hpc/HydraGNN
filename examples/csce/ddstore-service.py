@@ -87,7 +87,10 @@ if __name__ == "__main__":
     trainset = DistDataset(trainset, "trainset", comm, **opt)
     valset = DistDataset(valset, "valset", comm, **opt)
     testset = DistDataset(testset, "testset", comm, **opt)
-    print("trainset,valset,testset size: %d %d %d" % (len(trainset), len(valset), len(testset)))
+    print(
+        "trainset,valset,testset size: %d %d %d"
+        % (len(trainset), len(valset), len(testset))
+    )
 
     trainset_sampler = torch.utils.data.distributed.DistributedSampler(trainset)
     valset_sampler = torch.utils.data.distributed.DistributedSampler(valset)
@@ -104,7 +107,11 @@ if __name__ == "__main__":
         testset_sample_list.append(i)
     print(
         "local size: %d %d %d"
-        % (len(trainset_sample_list), len(trainset_sample_list), len(testset_sample_list))
+        % (
+            len(trainset_sample_list),
+            len(trainset_sample_list),
+            len(testset_sample_list),
+        )
     )
 
     comm.Barrier()
@@ -113,7 +120,11 @@ if __name__ == "__main__":
         for k in range(args.epochs):
             comm.Barrier()
             t = 0
-            for name, dataset, sample_list in zip(["trainset", "valset", "testset"], [trainset, valset, testset], [trainset_sample_list, trainset_sample_list, trainset_sample_list]):
+            for name, dataset, sample_list in zip(
+                ["trainset", "valset", "testset"],
+                [trainset, valset, testset],
+                [trainset_sample_list, valset_sample_list, testset_sample_list],
+            ):
                 for i in sample_list:
                     if mode == 1:
                         i = 0
@@ -122,7 +133,8 @@ if __name__ == "__main__":
                     dataset.__getitem__(i)
                     t1 = time.time()
                     print(
-                        ">>> [%d] consumer received: %s %d (time: %f)" % (rank, name, i, t1 - t0)
+                        ">>> [%d] consumer received: %s %d (time: %f)"
+                        % (rank, name, i, t1 - t0)
                     )
                     t += t1 - t0
                 print("[%d] consumer done. (avg: %f)" % (rank, t / len(dataset)))
@@ -130,19 +142,28 @@ if __name__ == "__main__":
     else:
         for k in range(args.epochs):
             comm.Barrier()
-            for name, dataset, sample_list in zip(["trainset", "valset", "testset"], [trainset, valset, testset], [trainset_sample_list, trainset_sample_list, trainset_sample_list]):
+            for name, dataset, sample_list in zip(
+                ["trainset", "valset", "testset"],
+                [trainset, valset, testset],
+                [trainset_sample_list, valset_sample_list, testset_sample_list],
+            ):
                 dataset.ddstore.epoch_begin()
                 for seq, i in enumerate(sample_list):
                     if mode == 0:
                         i = 0
                         print(">>> [%d] producer waiting ..." % (rank))
                     else:
-                        print(">>> [%d] producer streaming begin ... %s %d" % (rank, name, i))
+                        print(
+                            ">>> [%d] producer streaming begin ... %s %d"
+                            % (rank, name, i)
+                        )
                     rtn = dataset.get(i)
                     if mode == 0:
                         print(">>> [%d] producer responded: %s %d" % (rank, name, i))
                     else:
-                        print(">>> [%d] producer streaming end: %s %d" % (rank, name, i))
+                        print(
+                            ">>> [%d] producer streaming end: %s %d" % (rank, name, i)
+                        )
                     if (seq + 1) % args.batch_size == 0:
                         dataset.ddstore.epoch_end()
                         dataset.ddstore.epoch_begin()
