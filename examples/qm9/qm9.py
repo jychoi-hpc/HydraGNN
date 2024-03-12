@@ -10,6 +10,7 @@ except:
     from torch_geometric.data import DataLoader
 
 import hydragnn
+import hydragnn.utils.tracer as tr
 
 # Update each sample prior to loading.
 def qm9_pre_transform(data):
@@ -17,13 +18,7 @@ def qm9_pre_transform(data):
     data.x = data.z.float().view(-1, 1)
     # Only predict free energy (index 10 of 19 properties) for this run.
     data.y = data.y[:, 10] / len(data.x)
-    graph_features_dim = [1]
-    node_feature_dim = [1]
     return data
-
-
-def qm9_pre_filter(data):
-    return data.idx < num_samples
 
 
 # Set this path for output.
@@ -32,7 +27,8 @@ try:
 except:
     os.environ["SERIALIZED_DATA_PATH"] = os.getcwd()
 
-num_samples = 1000
+tr.initialize()
+tr.disable()
 
 # Configurable run choices (JSON file that accompanies this example script).
 filename = os.path.join(os.path.dirname(os.path.abspath(__file__)), "qm9.json")
@@ -53,7 +49,7 @@ hydragnn.utils.setup_log(log_name)
 # NOTE: data is moved to the device in the pre-transform.
 # NOTE: transforms/filters will NOT be re-run unless the qm9/processed/ directory is removed.
 dataset = torch_geometric.datasets.QM9(
-    root="dataset/qm9", pre_transform=qm9_pre_transform, pre_filter=qm9_pre_filter
+    root="dataset/qm9", pre_transform=qm9_pre_transform
 )
 train, val, test = hydragnn.preprocess.split_dataset(
     dataset, config["NeuralNetwork"]["Training"]["perc_train"], False
@@ -91,4 +87,13 @@ hydragnn.train.train_validate_test(
     config["NeuralNetwork"],
     log_name,
     verbosity,
+    create_plots=config["Visualization"]["create_plots"],
 )
+
+if tr.has("GPTLTracer"):
+    import gptl4py as gp
+
+    if world_rank == 0:
+        gp.pr_file(os.path.join("logs", log_name, "gp_timing.p%d" % world_rank))
+    gp.pr_summary_file(os.path.join("logs", log_name, "gp_timing.summary"))
+    gp.finalize()

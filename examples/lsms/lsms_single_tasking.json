@@ -2,16 +2,36 @@
     "Verbosity": {
         "level": 2
     },
+    "Dataset": {
+        "name": "FePt_32atoms",
+        "path": {"total": "./dataset/FePt_enthalpy"},
+        "format": "LSMS",
+        "compositional_stratified_splitting": true,
+        "rotational_invariance": false,
+        "node_features": {
+            "name": ["num_of_protons","charge_density", "magnetic_moment"],
+            "dim": [1,1,1],
+            "column_index": [0,5,6]
+        },
+        "graph_features":{
+            "name": [ "mixing_enthalpy"],
+            "dim": [1],
+            "column_index": [0]
+        },
+        "normalize_features": false
+    },
     "NeuralNetwork": {
-        "Profile": {"enable": 1},
         "Architecture": {
             "model_type": "PNA",
-            "hidden_dim": 5,
+            "radius": 7,
+            "max_neighbours": 100,
+            "periodic_boundary_conditions": false,
+            "hidden_dim": 100,
             "num_conv_layers": 6,
             "output_heads": {
                 "graph":{
                     "num_sharedlayers": 2,
-                    "dim_sharedlayers": 50,
+                    "dim_sharedlayers": 5,
                     "num_headlayers": 2,
                     "dim_headlayers": [50,25]
                 }
@@ -20,14 +40,15 @@
         },
         "Variables_of_interest": {
             "input_node_features": [0],
-            "output_names": ["free_energy"],
+            "output_names": ["mixing_enthalpy"],
+            "type": ["graph"],
             "output_index": [0],
             "output_dim": [1],
-            "type": ["graph"],
             "denormalize_output": false
         },
         "Training": {
             "num_epoch": 200,
+            "EarlyStopping": true,
             "perc_train": 0.7,
             "loss_function_type": "mse",
             "batch_size": 64,
