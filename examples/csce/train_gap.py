@@ -424,8 +424,9 @@ if __name__ == "__main__":
                 "mode": mode,
             }
             trainset = DistDataset(trainset, "trainset", comm, **opt)
-            valset = DistDataset(valset, "valset", comm, **opt)
-            testset = DistDataset(testset, "testset", comm, **opt)
+            ## Apply ddstore only for trainset
+            # valset = DistDataset(valset, "valset", comm, **opt)
+            # testset = DistDataset(testset, "testset", comm, **opt)
             trainset.pna_deg = pna_deg
     else:
         raise NotImplementedError("No supported format: %s" % (args.format))

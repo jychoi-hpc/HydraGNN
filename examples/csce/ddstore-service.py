@@ -85,32 +85,22 @@ if __name__ == "__main__":
     valset = SimplePickleDataset(basedir, "valset")
     testset = SimplePickleDataset(basedir, "testset")
     trainset = DistDataset(trainset, "trainset", comm, **opt)
-    valset = DistDataset(valset, "valset", comm, **opt)
-    testset = DistDataset(testset, "testset", comm, **opt)
     print(
         "trainset,valset,testset size: %d %d %d"
         % (len(trainset), len(valset), len(testset))
     )
 
     trainset_sampler = torch.utils.data.distributed.DistributedSampler(trainset)
-    valset_sampler = torch.utils.data.distributed.DistributedSampler(valset)
-    testset_sampler = torch.utils.data.distributed.DistributedSampler(testset)
 
     trainset_sample_list = list()
-    valset_sample_list = list()
-    testset_sample_list = list()
     for i in trainset_sampler:
         trainset_sample_list.append(i)
-    for i in valset_sampler:
-        valset_sample_list.append(i)
-    for i in testset_sampler:
-        testset_sample_list.append(i)
     print(
         "local size: %d %d %d"
         % (
             len(trainset_sample_list),
-            len(trainset_sample_list),
-            len(testset_sample_list),
+            len(valset),
+            len(testset),
         )
     )
 
@@ -121,9 +111,15 @@ if __name__ == "__main__":
             comm.Barrier()
             t = 0
             for name, dataset, sample_list in zip(
-                ["trainset", "valset", "testset"],
-                [trainset, valset, testset],
-                [trainset_sample_list, valset_sample_list, testset_sample_list],
+                [
+                    "trainset",
+                ],
+                [
+                    trainset,
+                ],
+                [
+                    trainset_sample_list,
+                ],
             ):
                 for i in sample_list:
                     if mode == 1:
@@ -143,9 +139,15 @@ if __name__ == "__main__":
         for k in range(args.epochs):
             comm.Barrier()
             for name, dataset, sample_list in zip(
-                ["trainset", "valset", "testset"],
-                [trainset, valset, testset],
-                [trainset_sample_list, valset_sample_list, testset_sample_list],
+                [
+                    "trainset",
+                ],
+                [
+                    trainset,
+                ],
+                [
+                    trainset_sample_list,
+                ],
             ):
                 dataset.ddstore.epoch_begin()
                 for seq, i in enumerate(sample_list):
