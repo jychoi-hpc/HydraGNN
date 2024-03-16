@@ -23,15 +23,20 @@ import torch.distributed as dist
 def update_config(config, train_loader, val_loader, test_loader):
     """check if config input consistent and update config with model and datasets"""
 
-    graph_size_variable = check_if_graph_size_variable(
-        train_loader, val_loader, test_loader
-    )
+    graph_size_variable = os.getenv("HYDRAGNN_FORCE_VARIABLE_GRAPH_SIZE")
+    if graph_size_variable is None:
+        graph_size_variable = check_if_graph_size_variable(
+            train_loader, val_loader, test_loader
+        )
+    else:
+        graph_size_variable = bool(int(graph_size_variable))
 
+    ## Use val_loader instead of train_loader for DDStore2
     if "Dataset" in config:
-        check_output_dim_consistent(train_loader.dataset[0], config)
+        check_output_dim_consistent(val_loader.dataset[0], config)
 
     config["NeuralNetwork"] = update_config_NN_outputs(
-        config["NeuralNetwork"], train_loader.dataset[0], graph_size_variable
+        config["NeuralNetwork"], val_loader.dataset[0], graph_size_variable
     )
 
     config = normalize_output_config(config)

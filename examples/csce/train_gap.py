@@ -1,8 +1,3 @@
-import mpi4py
-
-mpi4py.rc.thread_level = "serialized"
-mpi4py.rc.threads = False
-
 import os, json
 import random
 import pickle, csv

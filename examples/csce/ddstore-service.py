@@ -121,16 +121,16 @@ if __name__ == "__main__":
                     trainset_sample_list,
                 ],
             ):
-                for i in sample_list:
+                for seq, i in enumerate(sample_list):
                     if mode == 1:
                         i = 0
-                    print(">>> [%d] consumer asking ... %s %d" % (rank, name, i))
+                    print(">>> [%d] consumer asking ... %s %d %d" % (rank, name, seq, i))
                     t0 = time.time()
                     dataset.__getitem__(i)
                     t1 = time.time()
                     print(
-                        ">>> [%d] consumer received: %s %d (time: %f)"
-                        % (rank, name, i, t1 - t0)
+                        ">>> [%d] consumer received: %s %d %d (time: %f)"
+                        % (rank, name, seq, i, t1 - t0)
                     )
                     t += t1 - t0
                 print("[%d] consumer done. (avg: %f)" % (rank, t / len(dataset)))
@@ -161,10 +161,10 @@ if __name__ == "__main__":
                         )
                     rtn = dataset.get(i)
                     if mode == 0:
-                        print(">>> [%d] producer responded: %s %d" % (rank, name, i))
+                        print(">>> [%d] producer responded: %s %d %d" % (rank, name, seq, i))
                     else:
                         print(
-                            ">>> [%d] producer streaming end: %s %d" % (rank, name, i)
+                            ">>> [%d] producer streaming end: %s %d %d" % (rank, name, seq, i)
                         )
                     if (seq + 1) % args.batch_size == 0:
                         dataset.ddstore.epoch_end()

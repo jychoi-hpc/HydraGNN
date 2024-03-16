@@ -78,11 +78,12 @@ class AdiosWriter:
         if label not in self.dataset:
             self.dataset[label] = list()
 
+        print("type(data):", type(data), flush=True)
         if isinstance(data, list):
             self.dataset[label].extend(data)
         elif isinstance(data, torch_geometric.data.Data):
             self.dataset[label].append(data)
-        elif isinstance(data, BaseDataset):
+        elif isinstance(data, AbstractBaseDataset):
             self.dataset[label] = data
         else:
             raise Exception("Unsuppored data type yet.")
