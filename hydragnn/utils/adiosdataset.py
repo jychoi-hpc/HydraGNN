@@ -19,11 +19,12 @@ import torch
 from multiprocessing.shared_memory import SharedMemory
 
 try:
-    import pyddstore as dds
+    import pyddstore2 as dds
 except ImportError:
     pass
 
 import hydragnn.utils.tracer as tr
+import pickle
 
 from hydragnn.utils.abstractbasedataset import AbstractBaseDataset
 from hydragnn.utils import nsplit
@@ -78,7 +79,6 @@ class AdiosWriter:
         if label not in self.dataset:
             self.dataset[label] = list()
 
-        print("type(data):", type(data), flush=True)
         if isinstance(data, list):
             self.dataset[label].extend(data)
         elif isinstance(data, torch_geometric.data.Data):
@@ -119,7 +119,9 @@ class AdiosWriter:
 
             if len(self.dataset[label]) > 0:
                 data = self.dataset[label][0]
-                geom_version = list(map(lambda x: int(x), torch_geometric.__version__.split('.')))
+                geom_version = list(
+                    map(lambda x: int(x), torch_geometric.__version__.split("."))
+                )
                 if geom_version[0] == 2 and geom_version[1] < 4:
                     self.io.DefineAttribute("%s/keys" % label, data.keys)
                     keys = sorted(data.keys)
@@ -127,7 +129,10 @@ class AdiosWriter:
                     self.io.DefineAttribute("%s/keys" % label, data.keys())
                     keys = sorted(data.keys())
                 else:
-                    raise RuntimeError("pytorch geometric version is not supported: %s"%torch_geometric.__version__)
+                    raise RuntimeError(
+                        "pytorch geometric version is not supported: %s"
+                        % torch_geometric.__version__
+                    )
 
                 self.comm.allgather(keys)
 
@@ -234,6 +239,9 @@ class AdiosDataset(AbstractBaseDataset):
         enable_cache=False,
         ddstore=False,
         ddstore_width=None,
+        use_mq=False,
+        role=1,
+        mode=0,
     ):
         """
         Parameters
@@ -305,7 +313,9 @@ class AdiosDataset(AbstractBaseDataset):
                 self.ddstore_comm_rank,
                 self.ddstore_comm_size,
             )
-            self.ddstore = dds.PyDDStore(self.ddstore_comm)
+            self.ddstore = dds.PyDDStore(
+                self.ddstore_comm, use_mq=use_mq, role=role, mode=mode
+            )
         log("Adios reading:", self.filename)
         with ad2.open(self.filename, "r", MPI.COMM_SELF) as f:
             f.__next__()
@@ -404,22 +414,22 @@ class AdiosDataset(AbstractBaseDataset):
                     # Read only local portion
                     vname = "%s/%s" % (label, k)
                     self.data[k] = f.read(vname, start, count)
-                    if vdim > 0:
-                        self.data[k] = np.moveaxis(self.data[k], vdim, 0)
-                        self.data[k] = np.ascontiguousarray(self.data[k])
-                    self.ddstore.add(vname, self.data[k])
-                    log(
-                        "DDStore add:",
-                        (
-                            vname,
-                            start,
-                            count,
-                            vdim,
-                            self.data[k].dtype,
-                            self.data[k].shape,
-                            self.data[k].sum(),
-                        ),
-                    )
+                    # if vdim > 0:
+                    #     self.data[k] = np.moveaxis(self.data[k], vdim, 0)
+                    #     self.data[k] = np.ascontiguousarray(self.data[k])
+                    # self.ddstore.add(vname, self.data[k])
+                    # log(
+                    #     "DDStore add:",
+                    #     (
+                    #         vname,
+                    #         start,
+                    #         count,
+                    #         vdim,
+                    #         self.data[k].dtype,
+                    #         self.data[k].shape,
+                    #         self.data[k].sum(),
+                    #     ),
+                    # )
                     nbytes += self.data[k].size * self.data[k].itemsize
             t2 = time.time()
             log("Adios reading time (sec): ", (t2 - t0))
@@ -432,6 +442,34 @@ class AdiosDataset(AbstractBaseDataset):
         if not self.preload and not self.shmem:
             self.f = ad2.open(self.filename, "r", MPI.COMM_SELF)
             self.f.__next__()
+
+        if self.ddstore:
+            rx = list(nsplit(range(self.ndata), self.ddstore_comm_size))
+            local_rx = rx[self.ddstore_comm_rank]
+            data_list = list()
+            for idx in local_rx:
+                data_object = torch_geometric.data.Data()
+                for k in self.keys:
+                    shape = self.data[k].shape
+                    vdim = self.variable_dim[k]
+                    start = [
+                        0,
+                    ] * len(shape)
+                    count = list(shape)
+                    start[vdim] = (
+                        self.variable_offset[k][idx]
+                        - self.variable_offset[k][local_rx[0]]
+                    )
+                    count[vdim] = self.variable_count[k][idx]
+
+                    slice_list = list()
+                    for n0, n1 in zip(start, count):
+                        slice_list.append(slice(n0, n0 + n1))
+                    val = self.data[k][tuple(slice_list)]
+                    v = torch.tensor(val)
+                    exec("data_object.%s = v" % (k))
+                data_list.append(data_object)
+            self.ddstore.add(label, data_list)
 
     def len(self):
         """
@@ -452,6 +490,10 @@ class AdiosDataset(AbstractBaseDataset):
         if idx in self.cache:
             ## Load data from cached buffer
             data_object = self.cache[idx]
+        elif self.ddstore:
+            data_object = self.ddstore.get(
+                self.label, idx, decoder=lambda x: pickle.loads(x)
+            )
         else:
             data_object = torch_geometric.data.Data()
             for k in self.keys:
@@ -470,31 +512,6 @@ class AdiosDataset(AbstractBaseDataset):
                     for n0, n1 in zip(start, count):
                         slice_list.append(slice(n0, n0 + n1))
                     val = self.data[k][tuple(slice_list)]
-                elif self.ddstore:
-                    vname = "%s/%s" % (self.label, k)
-                    vartype = self.vars["%s/%s" % (self.label, k)]["Type"]
-                    if vartype == "double":
-                        dtype = np.float64
-                    elif vartype == "float":
-                        dtype = np.float32
-                    elif vartype == "int32_t":
-                        dtype = np.int32
-                    elif vartype == "int64_t":
-                        dtype = np.int64
-                    else:
-                        raise ValueError(vartype)
-
-                    val = np.zeros(count, dtype=dtype)
-                    ## vdim should be the first dim for DDStore
-                    if vdim > 0:
-                        val = np.moveaxis(val, vdim, 0)
-                        val = np.ascontiguousarray(val)
-
-                    offset = start[vdim]
-                    self.ddstore.get(vname, val, offset)
-                    if vdim > 0:
-                        val = np.moveaxis(val, 0, vdim)
-                        val = np.ascontiguousarray(val)
                 else:
                     ## Reading data directly from disk
                     # log("getitem out-of-memory:", self.label, k, idx)

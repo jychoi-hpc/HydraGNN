@@ -387,12 +387,23 @@ if __name__ == "__main__":
             os.environ["HYDRAGNN_AGGR_BACKEND"] = "mpi"
             os.environ["HYDRAGNN_USE_ddstore"] = "1"
 
-        opt = {"preload": preload, "shmem": shmem, "ddstore": ddstore}
-        print("opt:", opt)
+        use_mq = 1 if args.mq else 0  ## 0: false, 1: true
+        role = 1 if args.role == "consumer" else 0  ## 0: producer, 1: consumer
+        mode = 1 if args.stream else 0  ## 0: mq, 1: stream mq
+        opt = {
+            "preload": preload,
+            "shmem": shmem,
+            "ddstore": ddstore,
+            "ddstore_width": args.ddstore_width,
+            "use_mq": use_mq,
+            "role": role,
+            "mode": mode,
+        }
         fname = fname = os.path.join(
             os.path.dirname(__file__), "dataset", "csce_gap.bp"
         )
         trainset = AdiosDataset(fname, "trainset", comm, **opt)
+        ## Apply ddstore only for trainset
         valset = AdiosDataset(fname, "valset", comm)
         testset = AdiosDataset(fname, "testset", comm)
         comm.Barrier()
@@ -444,6 +455,7 @@ if __name__ == "__main__":
         valset,
         testset,
         config["NeuralNetwork"]["Training"]["batch_size"],
+        shuffle=True,
     )
     comm.Barrier()
 
