@@ -10,6 +10,7 @@ from hydragnn.utils.abstractbasedataset import AbstractBaseDataset
 from hydragnn.preprocess import update_predicted_values, update_atom_features
 
 import hydragnn.utils.tracer as tr
+import os
 
 
 class SimplePickleDataset(AbstractBaseDataset):

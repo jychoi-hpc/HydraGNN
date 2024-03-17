@@ -440,7 +440,11 @@ if __name__ == "__main__":
         val_loader,
         test_loader,
     ) = hydragnn.preprocess.create_dataloaders(
-        trainset, valset, testset, config["NeuralNetwork"]["Training"]["batch_size"]
+        trainset,
+        valset,
+        testset,
+        config["NeuralNetwork"]["Training"]["batch_size"],
+        shuffle=False,
     )
     comm.Barrier()
 

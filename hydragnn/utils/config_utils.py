@@ -23,7 +23,7 @@ import torch.distributed as dist
 def update_config(config, train_loader, val_loader, test_loader):
     """check if config input consistent and update config with model and datasets"""
 
-    graph_size_variable = os.getenv("HYDRAGNN_FORCE_VARIABLE_GRAPH_SIZE")
+    graph_size_variable = os.getenv("HYDRAGNN_USE_VARIABLE_GRAPH_SIZE")
     if graph_size_variable is None:
         graph_size_variable = check_if_graph_size_variable(
             train_loader, val_loader, test_loader

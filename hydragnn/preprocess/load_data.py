@@ -112,12 +112,19 @@ class HydraDataLoader(DataLoader):
         ## List of threads job (futures)
         self.fs = queue.Queue()
 
+        self.counter = mp.Value("i", 0)
+        self.executor = ThreadPoolExecutor(
+            max_workers=self.num_workers,
+            initializer=self.worker_init,
+            initargs=(self.counter,),
+        )
+
         log("num_workers:", self.num_workers)
         log("len:", len(self._index_sampler))
 
     @staticmethod
     def worker_init(counter):
-        core_width = 2
+        core_width = 1
         if os.getenv("HYDRAGNN_AFFINITY_WIDTH") is not None:
             core_width = int(os.environ["HYDRAGNN_AFFINITY_WIDTH"])
 
@@ -144,8 +151,11 @@ class HydraDataLoader(DataLoader):
                     + core_offset
                 ]
             )
-            os.sched_setaffinity(0, affinity_mask)
-            affinity = os.sched_getaffinity(0)
+            try:
+                os.sched_setaffinity(0, affinity_mask)
+                affinity = os.sched_getaffinity(0)
+            except:
+                pass
 
         hostname = socket.gethostname()
         log(
@@ -175,15 +185,9 @@ class HydraDataLoader(DataLoader):
         self._num_yielded = 0
         self._sampler_iter = iter(self._index_sampler)
         self.fs_iter = iter(self.fs.get, None)
-        counter = mp.Value("i", 0)
-        executor = ThreadPoolExecutor(
-            max_workers=self.num_workers,
-            initializer=self.worker_init,
-            initargs=(counter,),
-        )
         for i in range(len(self._index_sampler)):
             index = next(self._sampler_iter)
-            future = executor.submit(
+            future = self.executor.submit(
                 self.fetch,
                 self.dataset,
                 i,
@@ -223,18 +227,23 @@ def dataset_loading_and_splitting(config: {}):
     )
 
 
-def create_dataloaders(trainset, valset, testset, batch_size):
+def create_dataloaders(trainset, valset, testset, batch_size, shuffle=True):
     if dist.is_initialized():
+        train_sampler = torch.utils.data.distributed.DistributedSampler(
+            trainset, shuffle=shuffle
+        )
+        val_sampler = torch.utils.data.distributed.DistributedSampler(
+            valset, shuffle=shuffle
+        )
+        test_sampler = torch.utils.data.distributed.DistributedSampler(
+            testset, shuffle=shuffle
+        )
 
-        train_sampler = torch.utils.data.distributed.DistributedSampler(trainset)
-        val_sampler = torch.utils.data.distributed.DistributedSampler(valset)
-        test_sampler = torch.utils.data.distributed.DistributedSampler(testset)
-
-        pin_memory = True
-        persistent_workers = False
         num_workers = 0
         if os.getenv("HYDRAGNN_NUM_WORKERS") is not None:
             num_workers = int(os.environ["HYDRAGNN_NUM_WORKERS"])
+        pin_memory = True if torch.cuda.is_available() else False
+        persistent_workers = True if num_workers > 0 else False
 
         use_custom_dataloader = 0
         if os.getenv("HYDRAGNN_CUSTOM_DATALOADER") is not None:
@@ -267,7 +276,6 @@ def create_dataloaders(trainset, valset, testset, batch_size):
         )
 
     else:
-
         train_loader = DataLoader(trainset, batch_size=batch_size, shuffle=True)
         val_loader = DataLoader(
             valset,
