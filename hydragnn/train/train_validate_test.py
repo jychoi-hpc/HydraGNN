@@ -408,10 +408,12 @@ def train(
         and hasattr(loader.dataset.ddstore, "epoch_begin")
         and bool(int(os.getenv("HYDRAGNN_USE_ddstore", "0")))
     )
+    extra = 0 if loader.drop_last else 1
+    nbatch = len(loader.dataset) // loader.batch_size + extra
     tr.start("dataload")
     if use_ddstore:
         loader.dataset.ddstore.epoch_begin()
-    for data in iterate_tqdm(loader, verbosity, desc="Train"):
+    for ibatch, data in iterate_tqdm(enumerate(loader), verbosity, desc="Train"):
         if use_ddstore:
             loader.dataset.ddstore.epoch_end()
         tr.stop("dataload")
@@ -444,12 +446,10 @@ def train(
             num_samples_local += data.num_graphs
             for itask in range(len(tasks_loss)):
                 tasks_error[itask] += tasks_loss[itask] * data.num_graphs
-        tr.start("dataload")
-        if use_ddstore:
-            loader.dataset.ddstore.epoch_begin()
-    if use_ddstore:
-        loader.dataset.ddstore.epoch_end()
-    tr.stop("dataload")
+        if ibatch < (nbatch - 1):
+            tr.start("dataload")
+            if use_ddstore:
+                loader.dataset.ddstore.epoch_begin()
 
     train_error = total_error / num_samples_local
     tasks_error = tasks_error / num_samples_local
@@ -458,7 +458,6 @@ def train(
 
 @torch.no_grad()
 def validate(loader, model, verbosity, reduce_ranks=True):
-
     total_error = torch.tensor(0.0, device=get_device())
     tasks_error = torch.zeros(model.module.num_heads, device=get_device())
     num_samples_local = 0
@@ -496,7 +495,6 @@ def validate(loader, model, verbosity, reduce_ranks=True):
 
 @torch.no_grad()
 def test(loader, model, verbosity, reduce_ranks=True, return_samples=True):
-
     total_error = torch.tensor(0.0, device=get_device())
     tasks_error = torch.zeros(model.module.num_heads, device=get_device())
     num_samples_local = 0
