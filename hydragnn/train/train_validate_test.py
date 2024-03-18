@@ -406,14 +406,14 @@ def train(
     use_ddstore = (
         hasattr(loader.dataset, "ddstore")
         and hasattr(loader.dataset.ddstore, "epoch_begin")
-        and bool(int(os.getenv("HYDRAGNN_USE_ddstore", "0")))
+        and bool(int(os.getenv("HYDRAGNN_USE_DDSTORE_EPOCH", "0")))
     )
     extra = 0 if loader.drop_last else 1
     nbatch = len(loader.dataset) // loader.batch_size + extra
     tr.start("dataload")
     if use_ddstore:
         loader.dataset.ddstore.epoch_begin()
-    for ibatch, data in iterate_tqdm(enumerate(loader), verbosity, desc="Train"):
+    for ibatch, data in iterate_tqdm(enumerate(loader), verbosity, desc="Train", total=nbatch):
         if use_ddstore:
             loader.dataset.ddstore.epoch_end()
         tr.stop("dataload")
@@ -465,7 +465,7 @@ def validate(loader, model, verbosity, reduce_ranks=True):
     use_ddstore = (
         hasattr(loader.dataset, "ddstore")
         and hasattr(loader.dataset.ddstore, "epoch_begin")
-        and bool(int(os.getenv("HYDRAGNN_USE_ddstore", "0")))
+        and bool(int(os.getenv("HYDRAGNN_USE_DDSTORE_EPOCH", "0")))
     )
     if use_ddstore:
         loader.dataset.ddstore.epoch_begin()
@@ -502,7 +502,7 @@ def test(loader, model, verbosity, reduce_ranks=True, return_samples=True):
     use_ddstore = (
         hasattr(loader.dataset, "ddstore")
         and hasattr(loader.dataset.ddstore, "epoch_begin")
-        and bool(int(os.getenv("HYDRAGNN_USE_ddstore", "0")))
+        and bool(int(os.getenv("HYDRAGNN_USE_DDSTORE_EPOCH", "0")))
     )
     if use_ddstore:
         loader.dataset.ddstore.epoch_begin()

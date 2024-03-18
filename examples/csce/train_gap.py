@@ -373,20 +373,9 @@ if __name__ == "__main__":
     timer.start()
 
     if args.format == "adios":
-        preload = shmem = ddstore = False
-        if args.dataset == "preload":
-            preload = True
-            os.environ["HYDRAGNN_AGGR_BACKEND"] = "torch"
-            os.environ["HYDRAGNN_USE_ddstore"] = "0"
-        elif args.dataset == "shmem":
-            shmem = True
-            os.environ["HYDRAGNN_AGGR_BACKEND"] = "torch"
-            os.environ["HYDRAGNN_USE_ddstore"] = "0"
-        elif args.dataset == "ddstore":
-            ddstore = True
-            os.environ["HYDRAGNN_AGGR_BACKEND"] = "mpi"
-            os.environ["HYDRAGNN_USE_ddstore"] = "1"
-
+        preload = True if args.dataset == "preload" else False
+        shmem = True if args.dataset == "shmem" else False
+        ddstore = True if args.dataset == "ddstore" else False
         use_mq = 1 if args.mq else 0  ## 0: false, 1: true
         role = 1 if args.role == "consumer" else 0  ## 0: producer, 1: consumer
         mode = 1 if args.stream else 0  ## 0: mq, 1: stream mq
@@ -444,7 +433,11 @@ if __name__ == "__main__":
 
     if args.dataset == "ddstore":
         os.environ["HYDRAGNN_AGGR_BACKEND"] = "mpi"
-        os.environ["HYDRAGNN_USE_ddstore"] = "1"
+        os.environ["HYDRAGNN_USE_DDSTORE_EPOCH"] = "0" if (use_mq == 1) and (role == 1) else "1"
+    else:
+        os.environ["HYDRAGNN_AGGR_BACKEND"] = "torch"
+        os.environ["HYDRAGNN_USE_DDSTORE_EPOCH"] = "0"
+
 
     (
         train_loader,

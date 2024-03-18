@@ -70,7 +70,7 @@ if __name__ == "__main__":
     print("DDP setup:", comm_size, rank, device)
 
     os.environ["HYDRAGNN_AGGR_BACKEND"] = "mpi"
-    os.environ["HYDRAGNN_USE_ddstore"] = "1"
+    os.environ["HYDRAGNN_USE_DDSTORE_EPOCH"] = "1"
 
     use_mq = 1 if args.mq else 0  ## 0: false, 1: true
     role = 1 if args.role == "consumer" else 0  ## 0: producer, 1: consumer
