@@ -7,9 +7,19 @@
         "Architecture": {
             "model_type": "GIN",
             "radius": 7,
-            "max_neighbours": 5,
             "periodic_boundary_conditions": false,
             "hidden_dim": 5,
+            "max_neighbours": 5,
+            "num_gaussians": 50,
+            "num_filters": 50,
+            "envelope_exponent": 5,
+            "int_emb_size": 64,
+            "basis_emb_size": 8,
+            "out_emb_size": 128,
+            "num_after_skip": 2,
+            "num_before_skip": 1,
+            "num_radial": 6,
+            "num_spherical": 7,
             "num_conv_layers": 6,
             "output_heads": {
                 "graph":{
