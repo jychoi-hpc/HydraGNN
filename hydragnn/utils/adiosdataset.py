@@ -478,7 +478,7 @@ class AdiosDataset(AbstractBaseDataset):
         return self.ndata
 
     @tr.profile("get")
-    def get(self, idx):
+    def get(self, idx, stream_ichannel=0):
         """
         Get data with a given index
         """
@@ -492,7 +492,7 @@ class AdiosDataset(AbstractBaseDataset):
             data_object = self.cache[idx]
         elif self.ddstore:
             data_object = self.ddstore.get(
-                self.label, idx, decoder=lambda x: pickle.loads(x)
+                self.label, idx, decoder=lambda x: pickle.loads(x), stream_ichannel=stream_ichannel
             )
         else:
             data_object = torch_geometric.data.Data()

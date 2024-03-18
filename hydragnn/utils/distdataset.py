@@ -72,9 +72,9 @@ class DistDataset(AbstractBaseDataset):
         return self.len()
 
     @tr.profile("get")
-    def get(self, idx):
+    def get(self, idx, stream_ichannel=0):
         data_object = self.ddstore.get(
-            self.label, idx, decoder=lambda x: pickle.loads(x)
+            self.label, idx, decoder=lambda x: pickle.loads(x), stream_ichannel=stream_ichannel
         )
         return data_object
 

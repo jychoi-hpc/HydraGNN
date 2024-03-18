@@ -45,6 +45,13 @@ if __name__ == "__main__":
         metavar="N",
         help="input batch size for training (default: 128)",
     )
+    parser.add_argument(
+        "--nchannels",
+        type=int,
+        default=1,
+        metavar="N",
+        help="number of stream channels (default: 1)",
+    )
 
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
@@ -76,15 +83,23 @@ if __name__ == "__main__":
     role = 1 if args.role == "consumer" else 0  ## 0: producer, 1: consumer
     mode = 1 if args.stream else 0  ## 0: mq, 1: stream mq
     opt = {
+        "preload": False,
+        "shmem": False,
+        "ddstore": True,
         "use_mq": use_mq,
         "role": role,
         "mode": mode,
     }
-    basedir = os.path.join(os.path.dirname(__file__), "dataset", "pickle")
-    trainset = SimplePickleDataset(basedir, "trainset")
-    valset = SimplePickleDataset(basedir, "valset")
-    testset = SimplePickleDataset(basedir, "testset")
-    trainset = DistDataset(trainset, "trainset", comm, **opt)
+    # basedir = os.path.join(os.path.dirname(__file__), "dataset", "pickle")
+    # trainset = SimplePickleDataset(basedir, "trainset")
+    # valset = SimplePickleDataset(basedir, "valset")
+    # testset = SimplePickleDataset(basedir, "testset")
+    # trainset = DistDataset(trainset, "trainset", comm, **opt)
+    fname = os.path.join(os.path.dirname(__file__), "dataset", "csce_gap.bp")
+    trainset = AdiosDataset(fname, "trainset", comm, **opt)
+    valset = AdiosDataset(fname, "valset", comm)
+    testset = AdiosDataset(fname, "testset", comm)
+
     print(
         "trainset,valset,testset size: %d %d %d"
         % (len(trainset), len(valset), len(testset))
@@ -159,7 +174,9 @@ if __name__ == "__main__":
                             ">>> [%d] producer streaming begin ... %s %d"
                             % (rank, name, i)
                         )
-                    rtn = dataset.get(i)
+                    nchannels = args.nchannels if args.nchannels > 0 else 1
+                    stream_ichannel = (seq // args.batch_size) % nchannels
+                    rtn = dataset.get(i, stream_ichannel=stream_ichannel)
                     if mode == 0:
                         print(">>> [%d] producer responded: %s %d %d" % (rank, name, seq, i))
                     else:

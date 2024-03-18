@@ -388,7 +388,7 @@ if __name__ == "__main__":
             "role": role,
             "mode": mode,
         }
-        fname = fname = os.path.join(
+        fname = os.path.join(
             os.path.dirname(__file__), "dataset", "csce_gap.bp"
         )
         trainset = AdiosDataset(fname, "trainset", comm, **opt)
