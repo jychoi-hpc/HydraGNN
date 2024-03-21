@@ -388,9 +388,7 @@ if __name__ == "__main__":
             "role": role,
             "mode": mode,
         }
-        fname = os.path.join(
-            os.path.dirname(__file__), "dataset", "csce_gap.bp"
-        )
+        fname = os.path.join(os.path.dirname(__file__), "dataset", "csce_gap.bp")
         trainset = AdiosDataset(fname, "trainset", comm, **opt)
         ## Apply ddstore only for trainset
         valset = AdiosDataset(fname, "valset", comm)
@@ -433,11 +431,12 @@ if __name__ == "__main__":
 
     if args.dataset == "ddstore":
         os.environ["HYDRAGNN_AGGR_BACKEND"] = "mpi"
-        os.environ["HYDRAGNN_USE_DDSTORE_EPOCH"] = "0" if (use_mq == 1) and (role == 1) else "1"
+        os.environ["HYDRAGNN_USE_DDSTORE_EPOCH"] = (
+            "0" if (use_mq == 1) and (role == 1) else "1"
+        )
     else:
         os.environ["HYDRAGNN_AGGR_BACKEND"] = "torch"
         os.environ["HYDRAGNN_USE_DDSTORE_EPOCH"] = "0"
-
 
     (
         train_loader,
@@ -448,7 +447,7 @@ if __name__ == "__main__":
         valset,
         testset,
         config["NeuralNetwork"]["Training"]["batch_size"],
-        shuffle=True,
+        shuffle=False,
     )
     comm.Barrier()
 

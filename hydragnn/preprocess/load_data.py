@@ -113,7 +113,7 @@ class HydraDataLoader(DataLoader):
         self.fs = queue.Queue()
 
         self.counter = mp.Value("i", 0)
-        self.executor = ThreadPoolExecutor(
+        self.executor = ProcessPoolExecutor(
             max_workers=self.num_workers,
             initializer=self.worker_init,
             initargs=(self.counter,),
