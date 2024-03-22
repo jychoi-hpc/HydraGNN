@@ -106,7 +106,9 @@ if __name__ == "__main__":
         % (len(trainset), len(valset), len(testset))
     )
 
-    trainset_sampler = torch.utils.data.distributed.DistributedSampler(trainset)
+    trainset_sampler = torch.utils.data.distributed.DistributedSampler(
+        trainset, shuffle=False
+    )
 
     trainset_sample_list = list()
     for i in trainset_sampler:
@@ -140,7 +142,9 @@ if __name__ == "__main__":
                 for seq, i in enumerate(sample_list):
                     if mode == 1:
                         i = 0
-                    print(">>> [%d] consumer asking ... %s %d %d" % (rank, name, seq, i))
+                    print(
+                        ">>> [%d] consumer asking ... %s %d %d" % (rank, name, seq, i)
+                    )
                     t0 = time.time()
                     dataset.__getitem__(i)
                     t1 = time.time()
@@ -154,6 +158,7 @@ if __name__ == "__main__":
     else:
         for k in range(args.epochs):
             comm.Barrier()
+            t = 0
             for name, dataset, sample_list in zip(
                 [
                     "trainset",
@@ -177,15 +182,31 @@ if __name__ == "__main__":
                         )
                     nchannels = args.nchannels if args.nchannels > 0 else 1
                     stream_ichannel = (seq // args.batch_size) % nchannels
+                    t0 = time.time()
                     rtn = dataset.get(i, stream_ichannel=stream_ichannel)
+                    t1 = time.time()
                     if mode == 0:
-                        print(">>> [%d] producer responded: %s %d %d" % (rank, name, seq, i))
+                        print(
+                            ">>> [%d] producer responded:" % (rank),
+                            name,
+                            seq,
+                            i,
+                            stream_ichannel,
+                            "(time: %f)" % (t1 - t0),
+                        )
                     else:
                         print(
-                            ">>> [%d] producer streaming end: %s %d %d" % (rank, name, seq, i)
+                            ">>> [%d] producer streaming end:" % (rank),
+                            name,
+                            seq,
+                            i,
+                            stream_ichannel,
+                            "(time: %f)" % (t1 - t0),
                         )
+                    t += t1 - t0
                     if (seq + 1) % args.batch_size == 0:
                         dataset.ddstore.epoch_end()
                         dataset.ddstore.epoch_begin()
                 dataset.ddstore.epoch_end()
+            print("[%d] producer done. (avg: %f)" % (rank, t / len(dataset)))
     sys.exit(0)

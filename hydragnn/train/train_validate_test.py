@@ -408,13 +408,16 @@ def train(
         and hasattr(loader.dataset.ddstore, "epoch_begin")
         and bool(int(os.getenv("HYDRAGNN_USE_DDSTORE_EPOCH", "0")))
     )
-    print ("use_ddstore_epoch:", use_ddstore_epoch)
+    print("use_ddstore_epoch:", use_ddstore_epoch)
+    print("len(loader.sampler):", len(loader.sampler))
     extra = 0 if loader.drop_last else 1
     nbatch = len(loader.sampler) // loader.batch_size + extra
     tr.start("dataload")
     if use_ddstore_epoch:
         loader.dataset.ddstore.epoch_begin()
-    for ibatch, data in iterate_tqdm(enumerate(loader), verbosity, desc="Train", total=nbatch):
+    for ibatch, data in iterate_tqdm(
+        enumerate(loader), verbosity, desc="Train", total=nbatch
+    ):
         if use_ddstore_epoch:
             loader.dataset.ddstore.epoch_end()
         tr.stop("dataload")

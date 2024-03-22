@@ -37,6 +37,7 @@ from hydragnn.utils.print_utils import print_master, log
 from torch_geometric.data import Batch, Dataset
 from torch.utils.data.dataloader import _DatasetKind
 
+import concurrent
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 import multiprocessing as mp
 import queue
@@ -113,7 +114,7 @@ class HydraDataLoader(DataLoader):
         self.fs = queue.Queue()
 
         self.counter = mp.Value("i", 0)
-        self.executor = ProcessPoolExecutor(
+        self.executor = ThreadPoolExecutor(
             max_workers=self.num_workers,
             initializer=self.worker_init,
             initargs=(self.counter,),
@@ -177,9 +178,14 @@ class HydraDataLoader(DataLoader):
         log("Iterator reset")
         ## Check previous futures
         if self.fs.qsize() > 0:
-            log("Clearn previous futures:", self.fs.qsize())
-            for future in iter(self.fs.get, None):
-                future.cancel()
+            # log("Clearn previous futures:", self.fs.qsize())
+            # for future in iter(self.fs.get, None):
+            #     future.cancel()
+            log("Waiting ...")
+            one, not_done = concurrent.futures.wait(
+                list(self.fs), return_when=concurrent.futures.ALL_COMPLETED
+            )
+            log("Waiting ... done.")
 
         ## Resetting
         self._num_yielded = 0
