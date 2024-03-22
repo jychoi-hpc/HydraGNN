@@ -27,10 +27,6 @@ def qm9_pre_transform(data):
     return data
 
 
-def qm9_pre_filter(data):
-    return data.idx < num_samples
-
-
 # Set this path for output.
 try:
     os.environ["SERIALIZED_DATA_PATH"]
@@ -153,8 +149,6 @@ def objective(trial):
 
 if __name__ == "__main__":
 
-    num_samples = 1000
-
     # Configurable run choices (JSON file that accompanies this example script).
     filename = os.path.join(os.path.dirname(os.path.abspath(__file__)), "qm9.json")
     with open(filename, "r") as f:
@@ -174,7 +168,7 @@ if __name__ == "__main__":
     # NOTE: data is moved to the device in the pre-transform.
     # NOTE: transforms/filters will NOT be re-run unless the qm9/processed/ directory is removed.
     dataset = torch_geometric.datasets.QM9(
-        root="dataset/qm9", pre_transform=qm9_pre_transform, pre_filter=qm9_pre_filter
+        root="dataset/qm9", pre_transform=qm9_pre_transform
     )
     trainset, valset, testset = hydragnn.preprocess.split_dataset(
         dataset, config["NeuralNetwork"]["Training"]["perc_train"], False
