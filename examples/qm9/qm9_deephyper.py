@@ -3,6 +3,7 @@ import logging
 
 import torch
 import torch_geometric
+torch.backends.cudnn.enabled = False
 
 # deprecated in torch_geometric 2.0
 try:
@@ -64,7 +65,7 @@ def run(trial):
     config["NeuralNetwork"]["Architecture"]["model_type"] = trial.parameters["model_type"]
     config["NeuralNetwork"]["Architecture"]["hidden_dim"] = trial.parameters["hidden_dim"]
     config["NeuralNetwork"]["Architecture"]["num_conv_layers"] = trial.parameters["num_conv_layers"]
-    config["NeuralNetwork"]["Architecture"]["output_heads"]["graph"]["num_headlayers"] = trial.parameters["num_headlayers"]
+    #config["NeuralNetwork"]["Architecture"]["output_heads"]["graph"]["num_headlayers"] = trial.parameters["num_headlayers"]
 
     if trial.parameters["model_type"] not in ['EGNN', 'SchNet', 'DimeNet']:
         config["NeuralNetwork"]["Architecture"]["equivariance"] = False
@@ -115,7 +116,8 @@ def run(trial):
     validation_loss = validation_loss.cpu().detach().numpy()
 
     # Return the metric to minimize (e.g., validation loss)
-    return validation_loss
+    print ("validation_loss.item()", validation_loss.item())
+    return validation_loss.item()
 
 
 if __name__ == "__main__":
@@ -143,7 +145,7 @@ if __name__ == "__main__":
 
     # Define the search space for hyperparameters
     problem.add_hyperparameter((1, 2), "num_conv_layers")  # discrete parameter
-    problem.add_hyperparameter((1, 2), "num_headlayers")  # discrete parameter
+    #problem.add_hyperparameter((1, 1), "num_headlayers")  # discrete parameter
     problem.add_hyperparameter((50, 52), "hidden_dim")  # discrete parameter
     problem.add_hyperparameter(['EGNN', 'PNA', 'SchNet'], "model_type")  # categorical parameter
 
@@ -160,7 +162,7 @@ if __name__ == "__main__":
     # define your search and execute it
     search = CBO(problem, parallel_evaluator, random_state=42, log_dir=log_name)
 
-    timeout = 120
+    timeout = 1200
     results = search.search(max_evals=10, timeout=timeout)
     print(results)
 
