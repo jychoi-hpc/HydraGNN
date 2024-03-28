@@ -10,6 +10,7 @@ except:
     from torch_geometric.data import DataLoader
 
 import hydragnn
+import argparse
 
 # Update each sample prior to loading.
 def qm9_pre_transform(data):
@@ -25,6 +26,13 @@ def qm9_pre_transform(data):
 def qm9_pre_filter(data):
     return data.idx < num_samples
 
+parser = argparse.ArgumentParser()
+parser.add_argument("--model_type", help="model_type", default="GIN")
+parser.add_argument("--hidden_dim", type=int, help="hidden_dim", default=5)
+parser.add_argument("--num_conv_layers", type=int, help="num_conv_layers", default=6)
+parser.add_argument("--log", help="log name", default="qm9_test")
+args = parser.parse_args()
+args.parameters = vars(args)
 
 # Set this path for output.
 try:
@@ -41,10 +49,19 @@ with open(filename, "r") as f:
 verbosity = config["Verbosity"]["level"]
 var_config = config["NeuralNetwork"]["Variables_of_interest"]
 
+# Update the config dictionary with the suggested hyperparameters
+config["NeuralNetwork"]["Architecture"]["model_type"] = args.parameters["model_type"]
+config["NeuralNetwork"]["Architecture"]["hidden_dim"] = args.parameters["hidden_dim"]
+config["NeuralNetwork"]["Architecture"]["num_conv_layers"] = args.parameters["num_conv_layers"]
+#config["NeuralNetwork"]["Architecture"]["output_heads"]["graph"]["num_headlayers"] = args.parameters["num_headlayers"]
+
+if args.parameters["model_type"] not in ['EGNN', 'SchNet', 'DimeNet']:
+    config["NeuralNetwork"]["Architecture"]["equivariance"] = False
+
 # Always initialize for multi-rank training.
 world_size, world_rank = hydragnn.utils.setup_ddp()
 
-log_name = "qm9_test"
+log_name = args.log
 # Enable print to log file.
 hydragnn.utils.setup_log(log_name)
 
