@@ -17,6 +17,7 @@ import deephyper
 
 import pandas as pd
 import subprocess
+import re
 
 # Retrieve constants
 NNODES = int(os.environ["NNODES"])
@@ -29,6 +30,12 @@ OMP_NUM_THREADS = int(os.environ["OMP_NUM_THREADS"])
 DEEPHYPER_LOG_DIR = os.environ["DEEPHYPER_LOG_DIR"]
 DEEPHYPER_DB_HOST = os.environ["DEEPHYPER_DB_HOST"]
 
+# Set this path for output.
+try:
+    os.environ["SERIALIZED_DATA_PATH"]
+except:
+    os.environ["SERIALIZED_DATA_PATH"] = os.getcwd()
+
 
 # Update each sample prior to loading.
 def qm9_pre_transform(data):
@@ -40,12 +47,6 @@ def qm9_pre_transform(data):
     node_feature_dim = [1]
     return data
 
-
-# Set this path for output.
-try:
-    os.environ["SERIALIZED_DATA_PATH"]
-except:
-    os.environ["SERIALIZED_DATA_PATH"] = os.getcwd()
 
 def _parse_results(stdout):
     pattern = r"Test Loss: (\d+(\.\d+)?(e[-+]?\d+)?)"
