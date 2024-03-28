@@ -49,10 +49,10 @@ def qm9_pre_transform(data):
 
 
 def _parse_results(stdout):
-    pattern = r"Test Loss: (\d+(\.\d+)?(e[-+]?\d+)?)"
+    pattern = r"Test Loss: ([-+]?(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?)"
     matches = re.findall(pattern, stdout.decode())
     if matches:
-        return matches[-1]
+        return matches[-1][0]
     else:
         return "F"
 
