@@ -19,6 +19,10 @@ import pandas as pd
 import subprocess
 import re
 
+pd.options.display.max_columns = None
+pd.options.display.max_rows = None
+pd.options.display.width = None
+
 # Retrieve constants
 NNODES = int(os.environ["NNODES"])
 NTOTGPUS = int(os.environ["NTOTGPUS"])
@@ -49,7 +53,7 @@ def qm9_pre_transform(data):
 
 
 def _parse_results(stdout):
-    pattern = r"Test Loss: ([-+]?(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?)"
+    pattern = r"Train Loss: ([-+]?(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?)"
     matches = re.findall(pattern, stdout.decode())
     if matches:
         return matches[-1][0]
@@ -90,8 +94,7 @@ def run(trial, dequed=None):
     ])
     print("Command = ", command, file=f)
 
-    result = subprocess.check_output(command, shell=True)
-    print("result =", result, file=f)
+    result = subprocess.check_output(command, shell=True, stderr=subprocess.STDOUT)
     output = "F"
     try:
         output = _parse_results(result)
