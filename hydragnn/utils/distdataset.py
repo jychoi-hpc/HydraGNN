@@ -30,6 +30,7 @@ class DistDataset(AbstractBaseDataset):
         use_mq=False,
         role=1,
         mode=0,
+        local=False,
     ):
         super().__init__()
 
@@ -48,15 +49,18 @@ class DistDataset(AbstractBaseDataset):
         )
 
         ## set total before set subset
-        self.total_ns = len(data)
-        print("init: total_ns =", self.total_ns)
-
-        rx = list(nsplit(range(len(data)), self.ddstore_comm_size))[
-            self.ddstore_comm_rank
-        ]
-        for i in rx:
-            self.dataset.append(data[i])
-        print(self.rank, len(self.dataset))
+        if local:
+            local_ns = len(data)
+            for i in range(local_ns):
+                self.dataset.append(data[i])
+            self.total_ns = comm.allreduce(local_ns, op=MPI.SUM)
+        else:
+            self.total_ns = len(data)
+            rx = list(nsplit(range(len(data)), self.ddstore_comm_size))[
+                self.ddstore_comm_rank
+            ]
+            for i in rx:
+                self.dataset.append(data[i])
 
         self.data = list()
         self.labels = list()
