@@ -28,6 +28,7 @@ import pickle
 
 from hydragnn.utils.abstractbasedataset import AbstractBaseDataset
 from hydragnn.utils import nsplit
+from hydragnn.preprocess import update_predicted_values, update_atom_features
 
 
 class AdiosWriter:
@@ -119,25 +120,25 @@ class AdiosWriter:
 
             if len(self.dataset[label]) > 0:
                 data = self.dataset[label][0]
-                geom_version = list(
-                    map(lambda x: int(x), torch_geometric.__version__.split("."))
-                )
-                if geom_version[0] == 2 and geom_version[1] < 4:
-                    self.io.DefineAttribute("%s/keys" % label, data.keys)
-                    keys = sorted(data.keys)
-                elif geom_version[0] == 2 and geom_version[1] >= 4:
-                    self.io.DefineAttribute("%s/keys" % label, data.keys())
-                    keys = sorted(data.keys())
-                else:
-                    raise RuntimeError(
-                        "pytorch geometric version is not supported: %s"
-                        % torch_geometric.__version__
-                    )
-
+                keys = data.keys() if callable(data.keys) else data.keys
+                self.io.DefineAttribute("%s/keys" % label, keys)
+                keys = sorted(keys)
                 self.comm.allgather(keys)
 
             for k in keys:
-                arr_list = [data[k].cpu().numpy() for data in self.dataset[label]]
+                arr_list = list()
+                for data in self.dataset[label]:
+                    if isinstance(data[k], torch.Tensor):
+                        arr_list.append(data[k].cpu().numpy())
+                    elif isinstance(data[k], np.ndarray):
+                        arr_list.append(data[k])
+                    elif isinstance(data[k], (np.floating, np.integer)):
+                        arr_list.append(np.array((data[k],)))
+                    else:
+                        print("Error: type(data[k]):", label, k, type(data[k]))
+                        raise NotImplementedError(
+                            "Not supported: not tensor nor numpy array"
+                        )
                 m0 = np.min([x.shape for x in arr_list], axis=0)
                 m1 = np.max([x.shape for x in arr_list], axis=0)
                 vdims = list()
@@ -150,7 +151,9 @@ class AdiosWriter:
                 if len(vdims) > 0:
                     vdim = vdims[0]
                 val = np.concatenate(arr_list, axis=vdim)
-                assert val.data.contiguous
+                if not val.flags["C_CONTIGUOUS"]:
+                    val = np.ascontiguousarray(val)
+                assert val.data.c_contiguous
 
                 shape_list = self.comm.allgather(list(val.shape))
                 offset = [
@@ -242,6 +245,7 @@ class AdiosDataset(AbstractBaseDataset):
         use_mq=False,
         role=1,
         mode=0,
+        var_config=None,
     ):
         """
         Parameters
@@ -470,6 +474,26 @@ class AdiosDataset(AbstractBaseDataset):
                     exec("data_object.%s = v" % (k))
                 data_list.append(data_object)
             self.ddstore.add(label, data_list)
+        ## FIXME: Using the same routine in SimplePickleDataset. We need to make as a common function
+        self.var_config = var_config
+
+        if self.var_config is not None:
+            self.input_node_features = self.var_config["input_node_features"]
+            self.variables_type = self.var_config["type"]
+            self.output_index = self.var_config["output_index"]
+            self.graph_feature_dim = self.var_config["graph_feature_dims"]
+            self.node_feature_dim = self.var_config["node_feature_dims"]
+
+    def update_data_object(self, data_object):
+        if self.var_config is not None:
+            update_predicted_values(
+                self.variables_type,
+                self.output_index,
+                self.graph_feature_dim,
+                self.node_feature_dim,
+                data_object,
+            )
+            update_atom_features(self.input_node_features, data_object)
 
     def len(self):
         """
@@ -521,6 +545,8 @@ class AdiosDataset(AbstractBaseDataset):
                 exec("data_object.%s = v" % (k))
             if self.enable_cache:
                 self.cache[idx] = data_object
+
+        self.update_data_object(data_object)
         return data_object
 
     def unlink(self):
