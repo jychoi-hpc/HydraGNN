@@ -447,7 +447,7 @@ if __name__ == "__main__":
         valset,
         testset,
         config["NeuralNetwork"]["Training"]["batch_size"],
-        shuffle=False,
+        shuffle=True,
     )
     comm.Barrier()
 

@@ -107,7 +107,7 @@ if __name__ == "__main__":
     )
 
     trainset_sampler = torch.utils.data.distributed.DistributedSampler(
-        trainset, shuffle=False
+        trainset, shuffle=True
     )
 
     trainset_sample_list = list()
