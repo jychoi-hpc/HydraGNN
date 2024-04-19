@@ -19,7 +19,7 @@
             "num_spherical": 7,
             "num_filters": 126,
             "edge_features": ["length"],
-            "hidden_dim": 50,
+            "hidden_dim": 1000,
             "num_conv_layers": 3,
             "output_heads": {
                 "graph":{

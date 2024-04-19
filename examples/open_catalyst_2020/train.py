@@ -123,9 +123,24 @@ if __name__ == "__main__":
     parser.add_argument("--ddstore_width", type=int, help="ddstore width", default=None)
     parser.add_argument("--shmem", action="store_true", help="shmem")
     parser.add_argument("--log", help="log name")
-    parser.add_argument("--batch_size", type=int, help="batch_size", default=None)
     parser.add_argument("--everyone", action="store_true", help="gptimer")
     parser.add_argument("--modelname", help="model name")
+    parser.add_argument("--mq", action="store_true", help="use mq")
+    parser.add_argument("--stream", action="store_true", help="use stream mode")
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=4,
+        metavar="N",
+        help="number of epochs to train (default: 1)",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=32,
+        metavar="N",
+        help="input batch size for training (default: 128)",
+    )
 
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
@@ -143,6 +158,23 @@ if __name__ == "__main__":
         const="pickle",
     )
     parser.set_defaults(format="adios")
+
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--producer",
+        help="producer",
+        action="store_const",
+        dest="role",
+        const="producer",
+    )
+    group.add_argument(
+        "--consumer",
+        help="consumer",
+        action="store_const",
+        dest="role",
+        const="consumer",
+    )
+    parser.set_defaults(role="consumer")
     args = parser.parse_args()
 
     graph_feature_names = ["energy"]
@@ -163,9 +195,8 @@ if __name__ == "__main__":
     var_config["graph_feature_dims"] = graph_feature_dims
     var_config["node_feature_names"] = node_feature_names
     var_config["node_feature_dims"] = node_feature_dims
-
-    if args.batch_size is not None:
-        config["NeuralNetwork"]["Training"]["batch_size"] = args.batch_size
+    config["NeuralNetwork"]["Training"]["num_epoch"] = args.epochs
+    config["NeuralNetwork"]["Training"]["batch_size"] = args.batch_size
 
     ##################################################################################################################
     # Always initialize for multi-rank training.
@@ -268,16 +299,23 @@ if __name__ == "__main__":
     if args.format == "adios":
         info("Adios load")
         assert not (args.shmem and args.ddstore), "Cannot use both ddstore and shmem"
+
+        use_mq = 1 if args.mq else 0  ## 0: false, 1: true
+        role = 1 if args.role == "consumer" else 0  ## 0: producer, 1: consumer
+        mode = 1 if args.stream else 0  ## 0: mq, 1: stream mq
         opt = {
             "preload": False,
             "shmem": args.shmem,
             "ddstore": args.ddstore,
-            "ddstore_width": args.ddstore_width,
+            "ddstore_width": None if args.ddstore_width == 0 else args.ddstore_width,
+            "use_mq": use_mq,
+            "role": role,
+            "mode": mode,
         }
         fname = os.path.join(os.path.dirname(__file__), "./dataset/%s.bp" % modelname)
-        trainset = AdiosDataset(fname, "trainset", comm, **opt, var_config=var_config)
-        valset = AdiosDataset(fname, "valset", comm, **opt, var_config=var_config)
-        testset = AdiosDataset(fname, "testset", comm, **opt, var_config=var_config)
+        trainset = AdiosDataset(fname, "trainset", comm, var_config=var_config, **opt)
+        valset = AdiosDataset(fname, "valset", comm, var_config=var_config)
+        testset = AdiosDataset(fname, "testset", comm, var_config=var_config)
     elif args.format == "pickle":
         info("Pickle load")
         basedir = os.path.join(
@@ -296,7 +334,7 @@ if __name__ == "__main__":
         # minmax_graph_feature = trainset.minmax_graph_feature
         pna_deg = trainset.pna_deg
         if args.ddstore:
-            opt = {"ddstore_width": args.ddstore_width}
+            opt = {"ddstore_width": None if args.ddstore_width == 0 else args.ddstore_width}
             trainset = DistDataset(trainset, "trainset", comm, **opt)
             valset = DistDataset(valset, "valset", comm, **opt)
             testset = DistDataset(testset, "testset", comm, **opt)
@@ -313,11 +351,17 @@ if __name__ == "__main__":
 
     if args.ddstore:
         os.environ["HYDRAGNN_AGGR_BACKEND"] = "mpi"
-        os.environ["HYDRAGNN_USE_ddstore"] = "1"
+        os.environ["HYDRAGNN_USE_DDSTORE_EPOCH"] = (
+            "0" if (use_mq == 1) and (role == 1) else "1"
+        )
+    else:
+        os.environ["HYDRAGNN_AGGR_BACKEND"] = "torch"
+        os.environ["HYDRAGNN_USE_DDSTORE_EPOCH"] = "0"
 
     (train_loader, val_loader, test_loader,) = hydragnn.preprocess.create_dataloaders(
-        trainset, valset, testset, config["NeuralNetwork"]["Training"]["batch_size"]
+        trainset, valset, testset, config["NeuralNetwork"]["Training"]["batch_size"], shuffle=True,
     )
+    comm.Barrier()
 
     config = hydragnn.utils.update_config(config, train_loader, val_loader, test_loader)
     ## Good to sync with everyone right after DDStore setup

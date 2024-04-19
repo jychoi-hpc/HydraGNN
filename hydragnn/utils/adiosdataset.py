@@ -507,7 +507,7 @@ class AdiosDataset(AbstractBaseDataset):
         return len(self.subset)
 
     @tr.profile("get")
-    def get(self, idx, stream_ichannel=0):
+    def get(self, i, stream_ichannel=0):
         """
         Get data with a given index
         """

@@ -408,9 +408,9 @@ def train(
         and hasattr(loader.dataset.ddstore, "epoch_begin")
         and bool(int(os.getenv("HYDRAGNN_USE_DDSTORE_EPOCH", "0")))
     )
-    _, rank = get_comm_size_and_rank()
+    # _, rank = get_comm_size_and_rank()
     # print("use_ddstore_epoch:", use_ddstore_epoch)
-    print(rank, "len(loader.sampler):", len(loader.sampler))
+    # print(rank, "len(loader.sampler):", len(loader.sampler))
     extra = 0 if loader.drop_last else 1
     nbatch = len(loader.sampler) // loader.batch_size + extra
     tr.start("dataload")
