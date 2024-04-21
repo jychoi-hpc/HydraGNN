@@ -55,9 +55,19 @@ if __name__ == "__main__":
     parser.add_argument("--nsamples", type=int, help="number of samples")
 
     group = parser.add_mutually_exclusive_group()
-    group.add_argument("--default", action="store_const", help="use default", dest="mode", const="default")
-    group.add_argument("--stream", action="store_const", help="use stream", dest="mode", const="stream")
-    group.add_argument("--shmemq", action="store_const", help="use shmemq", dest="mode", const="shmemq")
+    group.add_argument(
+        "--default",
+        action="store_const",
+        help="use default",
+        dest="mode",
+        const="default",
+    )
+    group.add_argument(
+        "--stream", action="store_const", help="use stream", dest="mode", const="stream"
+    )
+    group.add_argument(
+        "--shmemq", action="store_const", help="use shmemq", dest="mode", const="shmemq"
+    )
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
         "--producer",
@@ -119,7 +129,7 @@ if __name__ == "__main__":
     for i in trainset_sampler:
         trainset_sample_list.append(i)
     if args.nsamples is not None:
-        trainset_sample_list = trainset_sample_list[:args.nsamples]
+        trainset_sample_list = trainset_sample_list[: args.nsamples]
     print(
         "local size: %d %d %d"
         % (

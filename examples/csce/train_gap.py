@@ -223,9 +223,19 @@ if __name__ == "__main__":
     )
 
     group = parser.add_mutually_exclusive_group()
-    group.add_argument("--default", action="store_const", help="use default", dest="mode", const="default")
-    group.add_argument("--stream", action="store_const", help="use stream", dest="mode", const="stream")
-    group.add_argument("--shmemq", action="store_const", help="use shmemq", dest="mode", const="shmemq")
+    group.add_argument(
+        "--default",
+        action="store_const",
+        help="use default",
+        dest="mode",
+        const="default",
+    )
+    group.add_argument(
+        "--stream", action="store_const", help="use stream", dest="mode", const="stream"
+    )
+    group.add_argument(
+        "--shmemq", action="store_const", help="use shmemq", dest="mode", const="shmemq"
+    )
     group = parser.add_mutually_exclusive_group()
 
     group = parser.add_mutually_exclusive_group()
@@ -416,7 +426,9 @@ if __name__ == "__main__":
         if args.dataset == "ddstore":
             use_mq = 1 if args.mq else 0  ## 0: false, 1: true
             role = 1 if args.role == "consumer" else 0  ## 0: producer, 1: consumer
-            mode = 1 if args.mode == "stream" else 0  ## 0: mq, 1: stream mq, 2: shmem mq
+            mode = (
+                1 if args.mode == "stream" else 0
+            )  ## 0: mq, 1: stream mq, 2: shmem mq
             mode = 2 if args.mode == "shmemq" else mode
             opt = {
                 "ddstore_width": args.ddstore_width,
