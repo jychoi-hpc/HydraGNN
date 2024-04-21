@@ -30,7 +30,6 @@ if __name__ == "__main__":
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     parser.add_argument("--mq", action="store_true", help="use mq")
-    parser.add_argument("--stream", action="store_true", help="use stream mode")
     parser.add_argument(
         "--epochs",
         type=int,
@@ -53,7 +52,12 @@ if __name__ == "__main__":
         help="number of stream channels (default: 1)",
     )
     parser.add_argument("--log", help="log")
+    parser.add_argument("--nsamples", type=int, help="number of samples")
 
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--default", action="store_const", help="use default", dest="mode", const="default")
+    group.add_argument("--stream", action="store_const", help="use stream", dest="mode", const="stream")
+    group.add_argument("--shmemq", action="store_const", help="use shmemq", dest="mode", const="shmemq")
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
         "--producer",
@@ -82,7 +86,8 @@ if __name__ == "__main__":
 
     use_mq = 1 if args.mq else 0  ## 0: false, 1: true
     role = 1 if args.role == "consumer" else 0  ## 0: producer, 1: consumer
-    mode = 1 if args.stream else 0  ## 0: mq, 1: stream mq
+    mode = 1 if args.mode == "stream" else 0  ## 0: mq, 1: stream mq, 2: shmem mq
+    mode = 2 if args.mode == "shmemq" else mode
     opt = {
         "preload": False,
         "shmem": False,
@@ -107,12 +112,14 @@ if __name__ == "__main__":
     )
 
     trainset_sampler = torch.utils.data.distributed.DistributedSampler(
-        trainset, shuffle=True
+        trainset, shuffle=False
     )
 
     trainset_sample_list = list()
     for i in trainset_sampler:
         trainset_sample_list.append(i)
+    if args.nsamples is not None:
+        trainset_sample_list = trainset_sample_list[:args.nsamples]
     print(
         "local size: %d %d %d"
         % (
@@ -124,6 +131,7 @@ if __name__ == "__main__":
 
     comm.Barrier()
 
+    ## Consumer
     if role == 1:
         for k in range(args.epochs):
             comm.Barrier()
@@ -155,6 +163,7 @@ if __name__ == "__main__":
                     t += t1 - t0
                 print("[%d] consumer done. (avg: %f)" % (rank, t / len(dataset)))
                 # comm.Barrier()
+    ## Producer
     else:
         for k in range(args.epochs):
             comm.Barrier()
@@ -172,7 +181,7 @@ if __name__ == "__main__":
             ):
                 dataset.ddstore.epoch_begin()
                 for seq, i in enumerate(sample_list):
-                    if mode == 0:
+                    if mode != 1:
                         i = 0
                         print(">>> [%d] producer waiting ..." % (rank))
                     else:
@@ -185,7 +194,7 @@ if __name__ == "__main__":
                     t0 = time.time()
                     rtn = dataset.get(i, stream_ichannel=stream_ichannel)
                     t1 = time.time()
-                    if mode == 0:
+                    if mode != 1:
                         print(
                             ">>> [%d] producer responded:" % (rank),
                             name,

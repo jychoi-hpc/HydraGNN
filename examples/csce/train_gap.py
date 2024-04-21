@@ -207,7 +207,6 @@ if __name__ == "__main__":
     parser.add_argument("--everyone", action="store_true", help="gptimer")
 
     parser.add_argument("--mq", action="store_true", help="use mq")
-    parser.add_argument("--stream", action="store_true", help="use stream mode")
     parser.add_argument(
         "--epochs",
         type=int,
@@ -222,6 +221,12 @@ if __name__ == "__main__":
         metavar="N",
         help="input batch size for training (default: 128)",
     )
+
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--default", action="store_const", help="use default", dest="mode", const="default")
+    group.add_argument("--stream", action="store_const", help="use stream", dest="mode", const="stream")
+    group.add_argument("--shmemq", action="store_const", help="use shmemq", dest="mode", const="shmemq")
+    group = parser.add_mutually_exclusive_group()
 
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
@@ -378,7 +383,8 @@ if __name__ == "__main__":
         ddstore = True if args.dataset == "ddstore" else False
         use_mq = 1 if args.mq else 0  ## 0: false, 1: true
         role = 1 if args.role == "consumer" else 0  ## 0: producer, 1: consumer
-        mode = 1 if args.stream else 0  ## 0: mq, 1: stream mq
+        mode = 1 if args.mode == "stream" else 0  ## 0: mq, 1: stream mq, 2: shmem mq
+        mode = 2 if args.mode == "shmemq" else mode
         opt = {
             "preload": preload,
             "shmem": shmem,
@@ -388,6 +394,7 @@ if __name__ == "__main__":
             "role": role,
             "mode": mode,
         }
+        print("opt:", opt)
         fname = os.path.join(os.path.dirname(__file__), "dataset", "csce_gap.bp")
         trainset = AdiosDataset(fname, "trainset", comm, **opt)
         ## Apply ddstore only for trainset
@@ -409,7 +416,8 @@ if __name__ == "__main__":
         if args.dataset == "ddstore":
             use_mq = 1 if args.mq else 0  ## 0: false, 1: true
             role = 1 if args.role == "consumer" else 0  ## 0: producer, 1: consumer
-            mode = 1 if args.stream else 0  ## 0: mq, 1: stream mq
+            mode = 1 if args.mode == "stream" else 0  ## 0: mq, 1: stream mq, 2: shmem mq
+            mode = 2 if args.mode == "shmemq" else mode
             opt = {
                 "ddstore_width": args.ddstore_width,
                 "use_mq": use_mq,
