@@ -432,10 +432,10 @@ def train(
     for ibatch, data in iterate_tqdm(
         enumerate(loader), verbosity, desc="Train", total=nbatch
     ):
-        if ibatch >= nbatch:
-            break
         if use_ddstore:
             loader.dataset.ddstore.epoch_end()
+        if ibatch >= nbatch:
+            break
         tr.stop("dataload")
         tr.start("zero_grad")
         with record_function("zero_grad"):
@@ -468,8 +468,8 @@ def train(
                 tasks_error[itask] += tasks_loss[itask] * data.num_graphs
         if ibatch < (nbatch - 1):
             tr.start("dataload")
-            if use_ddstore:
-                loader.dataset.ddstore.epoch_begin()
+        if use_ddstore:
+            loader.dataset.ddstore.epoch_begin()
 
     train_error = total_error / num_samples_local
     tasks_error = tasks_error / num_samples_local
