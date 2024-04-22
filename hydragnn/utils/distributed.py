@@ -151,8 +151,8 @@ def setup_ddp():
             if ifname is not None:
                 os.environ["GLOO_SOCKET_IFNAME"] = ifname
 
-        print_distributed(
-            1,
+        print(
+            world_rank,
             "Distributed data parallel: %s master at %s:%s"
             % (backend, master_addr, master_port),
         )
