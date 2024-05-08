@@ -31,9 +31,11 @@ from hydragnn.utils.abstractbasedataset import AbstractBaseDataset
 from hydragnn.utils import nsplit
 from hydragnn.preprocess import update_predicted_values, update_atom_features
 
+
 def print_offsets(d):
     print("offsets:", [d.fields[name][1] for name in d.names])
     print("itemsize:", d.itemsize)
+
 
 def graph2numpy(go, keys):
     arr_list = list()
@@ -47,9 +49,11 @@ def graph2numpy(go, keys):
     arr = np.array(tuple(arr_list), dtype=dtype)
     return arr
 
+
 def numpy2graph(bytes, dtype):
     arr = np.array()
     return arr
+
 
 class AdiosWriter:
     """Adios class to write Torch Geometric graph data"""
@@ -500,7 +504,7 @@ class AdiosDataset(AbstractBaseDataset):
                 bytes = x.tobytes()
                 len_list.append(len(bytes))
                 buffer.write(bytes)
-            arr = np.frombuffer(buffer.getbuffer(), dtype='S1')
+            arr = np.frombuffer(buffer.getbuffer(), dtype="S1")
             assert arr.data.c_contiguous
             self.ddstore.add(label, arr, len_list)
         ## FIXME: Using the same routine in SimplePickleDataset. We need to make as a common function
