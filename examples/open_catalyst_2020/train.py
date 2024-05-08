@@ -119,14 +119,11 @@ if __name__ == "__main__":
         type=str,
         default="s2ef_val_id_uncompressed",
     )
-    parser.add_argument("--ddstore", action="store_true", help="ddstore dataset")
     parser.add_argument("--ddstore_width", type=int, help="ddstore width", default=None)
-    parser.add_argument("--shmem", action="store_true", help="shmem")
     parser.add_argument("--log", help="log name")
     parser.add_argument("--everyone", action="store_true", help="gptimer")
     parser.add_argument("--modelname", help="model name")
     parser.add_argument("--mq", action="store_true", help="use mq")
-    parser.add_argument("--stream", action="store_true", help="use stream mode")
     parser.add_argument(
         "--epochs",
         type=int,
@@ -158,6 +155,51 @@ if __name__ == "__main__":
         const="pickle",
     )
     parser.set_defaults(format="adios")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--preload",
+        help="preload dataset",
+        action="store_const",
+        dest="dataset",
+        const="preload",
+    )
+    group.add_argument(
+        "--shmem",
+        help="shmem dataset",
+        action="store_const",
+        dest="dataset",
+        const="shmem",
+    )
+    group.add_argument(
+        "--ddstore",
+        help="ddstore dataset",
+        action="store_const",
+        dest="dataset",
+        const="ddstore",
+    )
+    group.add_argument(
+        "--simple",
+        help="no special dataset",
+        action="store_const",
+        dest="dataset",
+        const="simple",
+    )
+    parser.set_defaults(dataset="simple")
+
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--default",
+        action="store_const",
+        help="use default",
+        dest="mode",
+        const="default",
+    )
+    group.add_argument(
+        "--stream", action="store_const", help="use stream", dest="mode", const="stream"
+    )
+    group.add_argument(
+        "--shmemq", action="store_const", help="use shmemq", dest="mode", const="shmemq"
+    )
 
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
@@ -298,15 +340,17 @@ if __name__ == "__main__":
 
     if args.format == "adios":
         info("Adios load")
-        assert not (args.shmem and args.ddstore), "Cannot use both ddstore and shmem"
-
+        preload = True if args.dataset == "preload" else False
+        shmem = True if args.dataset == "shmem" else False
+        ddstore = True if args.dataset == "ddstore" else False
         use_mq = 1 if args.mq else 0  ## 0: false, 1: true
         role = 1 if args.role == "consumer" else 0  ## 0: producer, 1: consumer
-        mode = 1 if args.stream else 0  ## 0: mq, 1: stream mq
+        mode = 1 if args.mode == "stream" else 0  ## 0: mq, 1: stream mq, 2: shmem mq
+        mode = 2 if args.mode == "shmemq" else mode
         opt = {
-            "preload": False,
-            "shmem": args.shmem,
-            "ddstore": args.ddstore,
+            "preload": preload,
+            "shmem": shmem,
+            "ddstore": ddstore,
             "ddstore_width": None if args.ddstore_width == 0 else args.ddstore_width,
             "use_mq": use_mq,
             "role": role,
@@ -333,13 +377,23 @@ if __name__ == "__main__":
         # minmax_node_feature = trainset.minmax_node_feature
         # minmax_graph_feature = trainset.minmax_graph_feature
         pna_deg = trainset.pna_deg
-        if args.ddstore:
-            opt = {"ddstore_width": None if args.ddstore_width == 0 else args.ddstore_width}
+        if args.dataset == "ddstore":
+            use_mq = 1 if args.mq else 0  ## 0: false, 1: true
+            role = 1 if args.role == "consumer" else 0  ## 0: producer, 1: consumer
+            mode = (
+                1 if args.mode == "stream" else 0
+            )  ## 0: mq, 1: stream mq, 2: shmem mq
+            mode = 2 if args.mode == "shmemq" else mode
+            opt = {
+                "ddstore_width": None if args.ddstore_width == 0 else args.ddstore_width,
+                "use_mq": use_mq,
+                "role": role,
+                "mode": mode,
+            }
             trainset = DistDataset(trainset, "trainset", comm, **opt)
-            valset = DistDataset(valset, "valset", comm, **opt)
-            testset = DistDataset(testset, "testset", comm, **opt)
-            # trainset.minmax_node_feature = minmax_node_feature
-            # trainset.minmax_graph_feature = minmax_graph_feature
+            ## Apply ddstore only for trainset
+            # valset = DistDataset(valset, "valset", comm, **opt)
+            # testset = DistDataset(testset, "testset", comm, **opt)
             trainset.pna_deg = pna_deg
     else:
         raise NotImplementedError("No supported format: %s" % (args.format))
@@ -349,7 +403,7 @@ if __name__ == "__main__":
         % (len(trainset), len(valset), len(testset))
     )
 
-    if args.ddstore:
+    if args.dataset == "ddstore":
         os.environ["HYDRAGNN_AGGR_BACKEND"] = "mpi"
         os.environ["HYDRAGNN_USE_DDSTORE_EPOCH"] = (
             "0" if (use_mq == 1) and (role == 1) else "1"
