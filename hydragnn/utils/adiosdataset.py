@@ -25,11 +25,31 @@ except ImportError:
 
 import hydragnn.utils.tracer as tr
 import pickle
+from io import BytesIO
 
 from hydragnn.utils.abstractbasedataset import AbstractBaseDataset
 from hydragnn.utils import nsplit
 from hydragnn.preprocess import update_predicted_values, update_atom_features
 
+def print_offsets(d):
+    print("offsets:", [d.fields[name][1] for name in d.names])
+    print("itemsize:", d.itemsize)
+
+def graph2numpy(go, keys):
+    arr_list = list()
+    dtype_list = list()
+    for k in keys:
+        x = go[k].numpy()
+        dtype = f"{x.shape}{x.dtype}"
+        arr_list.append(x)
+        dtype_list.append(dtype)
+    dtype = np.dtype({"names": keys, "formats": dtype_list})
+    arr = np.array(tuple(arr_list), dtype=dtype)
+    return arr
+
+def numpy2graph(bytes, dtype):
+    arr = np.array()
+    return arr
 
 class AdiosWriter:
     """Adios class to write Torch Geometric graph data"""
@@ -473,8 +493,16 @@ class AdiosDataset(AbstractBaseDataset):
                     val = self.data[k][tuple(slice_list)]
                     v = torch.tensor(val)
                     exec("data_object.%s = v" % (k))
-                data_list.append(data_object)
-            self.ddstore.add(label, data_list)
+                data_list.append(graph2numpy(data_object, self.keys))
+            buffer = BytesIO()
+            len_list = list()
+            for x in data_list:
+                bytes = x.tobytes()
+                len_list.append(len(bytes))
+                buffer.write(bytes)
+            arr = np.frombuffer(buffer.getbuffer(), dtype='S1')
+            assert arr.data.c_contiguous
+            self.ddstore.add(label, arr, len_list)
         ## FIXME: Using the same routine in SimplePickleDataset. We need to make as a common function
         self.var_config = var_config
 
@@ -521,9 +549,46 @@ class AdiosDataset(AbstractBaseDataset):
             ## Load data from cached buffer
             data_object = self.cache[idx]
         elif self.ddstore:
-            data_object = self.ddstore.get(
-                self.label, idx, decoder=lambda x: pickle.loads(x), stream_ichannel=stream_ichannel
+            arr_list = list()
+            dtype_list = list()
+            for k in self.keys:
+                shape = self.vars["%s/%s" % (self.label, k)]["Shape"]
+                ishape = [int(x.strip(",")) for x in shape.strip().split()]
+                start = [
+                    0,
+                ] * len(ishape)
+                count = ishape
+                vdim = self.variable_dim[k]
+                start[vdim] = self.variable_offset[k][idx]
+                count[vdim] = self.variable_count[k][idx]
+
+                vartype = self.vars["%s/%s" % (self.label, k)]["Type"]
+                if vartype == "double":
+                    dtype = np.float64
+                elif vartype == "float":
+                    dtype = np.float32
+                elif vartype == "int32_t":
+                    dtype = np.int32
+                elif vartype == "int64_t":
+                    dtype = np.int64
+                else:
+                    raise ValueError(vartype)
+                x = np.zeros(tuple(count), dtype=dtype)
+                arr_list.append(x)
+                dtypestr = f"{x.shape}{x.dtype}"
+                dtype_list.append(dtypestr)
+            dtype = np.dtype({"names": self.keys, "formats": dtype_list})
+            arr = np.array(tuple(arr_list), dtype=dtype)
+
+            self.ddstore.get_ndarray(
+                self.label, arr, idx, stream_ichannel=stream_ichannel
             )
+
+            data_object = torch_geometric.data.Data()
+            for k in self.keys:
+                v = torch.tensor(arr[k])
+                exec("data_object.%s = v" % (k))
+
         else:
             data_object = torch_geometric.data.Data()
             for k in self.keys:
