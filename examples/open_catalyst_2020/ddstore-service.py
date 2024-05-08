@@ -53,7 +53,7 @@ if __name__ == "__main__":
         help="number of stream channels (default: 1)",
     )
     parser.add_argument("--log", help="log")
-    parser.add_argument("--nsamples", type=int, help="number of samples")
+    parser.add_argument("--num_samples", type=int, help="number of samples per process")
 
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
@@ -129,8 +129,8 @@ if __name__ == "__main__":
     trainset_sample_list = list()
     for i in trainset_sampler:
         trainset_sample_list.append(i)
-    if args.nsamples is not None:
-        trainset_sample_list = trainset_sample_list[: args.nsamples]
+    if args.num_samples is not None:
+        trainset_sample_list = trainset_sample_list[: args.num_samples * comm_size]
     print(
         "local size: %d %d %d"
         % (

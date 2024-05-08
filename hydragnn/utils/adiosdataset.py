@@ -3,7 +3,7 @@ import time
 import os
 import glob
 
-from .print_utils import print_distributed, log, iterate_tqdm
+from .print_utils import print_distributed, log, log0, iterate_tqdm
 
 import numpy as np
 
@@ -31,6 +31,9 @@ from hydragnn.utils.abstractbasedataset import AbstractBaseDataset
 from hydragnn.utils import nsplit
 from hydragnn.preprocess import update_predicted_values, update_atom_features
 
+@tr.profile("decode")
+def decode(x):
+    return pickle.loads(x)
 
 def print_offsets(d):
     print("offsets:", [d.fields[name][1] for name in d.names])
@@ -292,7 +295,6 @@ class AdiosDataset(AbstractBaseDataset):
         ddstore: bool, optional
             Option to use Distributed Data Store
         """
-        t0 = time.time()
         self.filename = filename
         self.label = label
         self.comm = comm
@@ -339,7 +341,7 @@ class AdiosDataset(AbstractBaseDataset):
             )
             self.ddstore_comm_rank = self.ddstore_comm.Get_rank()
             self.ddstore_comm_size = self.ddstore_comm.Get_size()
-            log(
+            log0(
                 "ddstore_comm_rank,ddstore_comm_size",
                 self.ddstore_comm_rank,
                 self.ddstore_comm_size,
@@ -347,38 +349,59 @@ class AdiosDataset(AbstractBaseDataset):
             self.ddstore = dds.PyDDStore(
                 self.ddstore_comm, use_mq=use_mq, role=role, mode=mode
             )
-        log("Adios reading:", self.filename)
+        log0("Adios reading:", self.filename)
+        t0 = time.time()
         with ad2.open(self.filename, "r", MPI.COMM_SELF) as f:
             f.__next__()
+            t1 = time.time()
             self.vars = f.available_variables()
             self.attrs = f.available_attributes()
-            self.keys = f.read_attribute_string("%s/keys" % label)
-            self.ndata = f.read_attribute("%s/ndata" % label).item()
+            self.keys = self.read_attribute_string0(f, "%s/keys" % label)
+            self.ndata = self.read_attribute0(f, "%s/ndata" % label).item()
             if "minmax_graph_feature" in self.attrs:
-                self.minmax_graph_feature = f.read_attribute(
+                self.minmax_graph_feature = self.read_attribute0(f, 
                     "minmax_graph_feature"
                 ).reshape((2, -1))
             if "minmax_node_feature" in self.attrs:
-                self.minmax_node_feature = f.read_attribute(
+                self.minmax_node_feature = self.read_attribute0(f,
                     "minmax_node_feature"
                 ).reshape((2, -1))
             if "pna_deg" in self.attrs:
-                self.pna_deg = f.read_attribute("pna_deg")
+                self.pna_deg = self.read_attribute0(f, "pna_deg")
+            t2 = time.time()
+            log0("Read attr time (sec): ", (t2 - t1))
 
             self.variable_count = dict()
             self.variable_offset = dict()
             self.variable_dim = dict()
 
             nbytes = 0
+            t3 = time.time()
             for k in self.keys:
-                self.variable_count[k] = f.read("%s/%s/variable_count" % (label, k))
-                self.variable_offset[k] = f.read("%s/%s/variable_offset" % (label, k))
-                self.variable_dim[k] = f.read_attribute(
+                self.variable_count[k] = self.read0(f, "%s/%s/variable_count" % (label, k))
+                log0(
+                    "read and bcast:",
+                    "%s/%s/variable_count" % (label, k),
+                    time.time() - t3,
+                )
+                self.variable_offset[k] = self.read0(f, "%s/%s/variable_offset" % (label, k))
+                log0(
+                    "read and bcast:",
+                    "%s/%s/variable_offset" % (label, k),
+                    time.time() - t3,
+                )
+                self.variable_dim[k] = self.read_attribute0(f, 
                     "%s/%s/variable_dim" % (label, k)
                 ).item()
+                log0(
+                    "read and bcast:",
+                    "%s/%s/variable_dim" % (label, k),
+                    time.time() - t3,
+                )
+
                 if self.preload:
                     ## load full data first
-                    self.data[k] = f.read("%s/%s" % (label, k))
+                    self.data[k] = self.read0(f, "%s/%s" % (label, k))
                 elif self.shmem:
                     if self.local_rank == 0:
                         adios = ad2.ADIOS()
@@ -462,19 +485,19 @@ class AdiosDataset(AbstractBaseDataset):
                     #     ),
                     # )
                     nbytes += self.data[k].size * self.data[k].itemsize
-            t2 = time.time()
-            log("Adios reading time (sec): ", (t2 - t0))
+            t4 = time.time()
+            log0("Adios reading time (sec): ", (t4 - t1))
             if self.ddstore:
-                log("DDStore total (GB):", nbytes / 1024 / 1024 / 1024)
-
-        t1 = time.time()
-        log("Data loading time (sec): ", (t1 - t0))
+                log0("DDStore total (GB):", nbytes / 1024 / 1024 / 1024)
+        t5 = time.time()
+        log0("Data loading time (sec): ", (t5 - t0))
 
         if not self.preload and not self.shmem:
             self.f = ad2.open(self.filename, "r", MPI.COMM_SELF)
             self.f.__next__()
 
         if self.ddstore:
+            t0 = time.time()
             rx = list(nsplit(range(self.ndata), self.ddstore_comm_size))
             local_rx = rx[self.ddstore_comm_rank]
             data_list = list()
@@ -508,7 +531,11 @@ class AdiosDataset(AbstractBaseDataset):
                 buffer.write(bytes)
             arr = np.frombuffer(buffer.getbuffer(), dtype="S1")
             assert arr.data.c_contiguous
+            t1 = time.time()
             self.ddstore.add(label, arr, len_list)
+            t2 = time.time()
+            log0("DDStore prepare time (sec): ", t1 - t0)
+            log0("DDStore add time (sec): ", t2 - t1)            
         ## FIXME: Using the same routine in SimplePickleDataset. We need to make as a common function
         self.var_config = var_config
 
@@ -522,6 +549,31 @@ class AdiosDataset(AbstractBaseDataset):
         self.subset = subset
         if self.subset is None:
             self.subset = list(range(self.ndata))
+
+    ## rank=0 read and bcast
+    def read0(self, f, vname):
+        if self.rank == 0:
+            val = f.read(vname)
+        else:
+            val = None
+        val = self.comm.bcast(val, root=0)
+        return val
+
+    def read_attribute0(self, f, vname):
+        if self.rank == 0:
+            val = f.read_attribute(vname)
+        else:
+            val = None
+        val = self.comm.bcast(val, root=0)
+        return val
+
+    def read_attribute_string0(self, f, vname):
+        if self.rank == 0:
+            val = f.read_attribute_string(vname)
+        else:
+            val = None
+        val = self.comm.bcast(val, root=0)
+        return val
 
     def update_data_object(self, data_object):
         if self.var_config is not None:

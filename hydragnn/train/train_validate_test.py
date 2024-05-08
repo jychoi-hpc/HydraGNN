@@ -432,10 +432,10 @@ def train(
     for ibatch, data in iterate_tqdm(
         enumerate(loader), verbosity, desc="Train", total=nbatch
     ):
-        if use_ddstore:
-            loader.dataset.ddstore.epoch_end()
         if ibatch >= nbatch:
             break
+        if use_ddstore:
+            loader.dataset.ddstore.epoch_end()
         tr.stop("dataload")
         tr.start("zero_grad")
         with record_function("zero_grad"):
@@ -447,9 +447,13 @@ def train(
         tr.stop("get_head_indices")
         tr.start("forward")
         with record_function("forward"):
+            tr.start("h2d")
             data = data.to(get_device())
+            tr.stop("h2d")
             pred = model(data)
+            tr.start("loss_calc")
             loss, tasks_loss = model.module.loss(pred, data.y, head_index)
+            tr.stop("loss_calc")
         tr.stop("forward")
         tr.start("backward")
         with record_function("backward"):
@@ -470,6 +474,8 @@ def train(
             tr.start("dataload")
         if use_ddstore:
             loader.dataset.ddstore.epoch_begin()
+    if use_ddstore:
+        loader.dataset.ddstore.epoch_end()
 
     train_error = total_error / num_samples_local
     tasks_error = tasks_error / num_samples_local
@@ -507,9 +513,10 @@ def validate(loader, model, verbosity, reduce_ranks=True):
         num_samples_local += data.num_graphs
         for itask in range(len(tasks_loss)):
             tasks_error[itask] += tasks_loss[itask] * data.num_graphs
-        if ibatch < (nbatch - 1):
-            if use_ddstore:
-                loader.dataset.ddstore.epoch_begin()
+        if use_ddstore:
+            loader.dataset.ddstore.epoch_begin()
+    if use_ddstore:
+        loader.dataset.ddstore.epoch_end()
 
     val_error = total_error / num_samples_local
     tasks_error = tasks_error / num_samples_local
@@ -583,9 +590,10 @@ def test(loader, model, verbosity, reduce_ranks=True, return_samples=True):
         num_samples_local += data.num_graphs
         for itask in range(len(tasks_loss)):
             tasks_error[itask] += tasks_loss[itask] * data.num_graphs
-        if ibatch < (nbatch - 1):
-            if use_ddstore:
-                loader.dataset.ddstore.epoch_begin()
+        if use_ddstore:
+            loader.dataset.ddstore.epoch_begin()
+    if use_ddstore:
+        loader.dataset.ddstore.epoch_end()
 
     if int(os.getenv("HYDRAGNN_DUMP_TESTDATA", "0")) == 1:
         f.close()
@@ -618,3 +626,4 @@ def test(loader, model, verbosity, reduce_ranks=True, return_samples=True):
                 predicted_values[ihead] = gather_tensor_ranks(predicted_values[ihead])
 
     return test_error, tasks_error, true_values, predicted_values
+

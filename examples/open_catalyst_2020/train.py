@@ -138,6 +138,12 @@ if __name__ == "__main__":
         metavar="N",
         help="input batch size for training (default: 128)",
     )
+    parser.add_argument(
+        "--num_samples",
+        type=int,
+        help="set num samples per process for weak-scaling test",
+        default=None,
+    )
 
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
@@ -347,6 +353,9 @@ if __name__ == "__main__":
         role = 1 if args.role == "consumer" else 0  ## 0: producer, 1: consumer
         mode = 1 if args.mode == "stream" else 0  ## 0: mq, 1: stream mq, 2: shmem mq
         mode = 2 if args.mode == "shmemq" else mode
+        subset = None
+        if args.num_samples is not None:
+            subset = list(range(args.num_samples * comm_size))
         opt = {
             "preload": preload,
             "shmem": shmem,
@@ -355,6 +364,7 @@ if __name__ == "__main__":
             "use_mq": use_mq,
             "role": role,
             "mode": mode,
+            "subset": subset,
         }
         fname = os.path.join(os.path.dirname(__file__), "./dataset/%s.bp" % modelname)
         trainset = AdiosDataset(fname, "trainset", comm, var_config=var_config, **opt)

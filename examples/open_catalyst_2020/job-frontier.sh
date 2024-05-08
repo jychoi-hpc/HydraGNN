@@ -63,8 +63,8 @@ export HYDRAGNN_NUM_WORKERS=$NW
 [ $SP -eq 0 ] && SCOREP_OPT=""
 [ $SP -eq 1 ] && export HYDRAGNN_MAX_NUM_BATCH=50 && export HYDRAGNN_VALTEST=0 && export NEPOCH=2
 
-PRODUCER="ddstore-service.py --modelname=OC2020$TAG --producer --epochs=$NEPOCH"
-CONSUMER="train.py --modelname=OC2020$TAG --inputfile=${M}_MTL.json --adios --ddstore --epochs=$NEPOCH --everyone --log=exp-OC2020$TAG-$SLURM_JOB_ID-NN$NN-NW$HYDRAGNN_NUM_WORKERS-M$M-W$WIDTH-X$X"
+PRODUCER="ddstore-service.py --modelname=OC2020$TAG --producer --epochs=$NEPOCH --num_samples=3500"
+CONSUMER="train.py --modelname=OC2020$TAG --inputfile=${M}_MTL.json --adios --ddstore --epochs=$NEPOCH --num_samples=3500 --everyone --log=exp-OC2020$TAG-$SLURM_JOB_ID-NN$NN-NW$HYDRAGNN_NUM_WORKERS-M$M-W$WIDTH-X$X"
 
 NN=$SLURM_JOB_NUM_NODES
 NP=$NP
@@ -72,7 +72,7 @@ NP=$NP
 set -x
 
 if [ $X -eq 0 ]; then
-## For single run:
+## File
 cleanup
 export SCOREP_EXPERIMENT_DIRECTORY=scorep-$JOBID-x$X-n$HYDRAGNN_NUM_WORKERS
 srun -N$NN -n$NP -c7 --gpus-per-task=1 --gpu-bind=closest \
@@ -80,14 +80,14 @@ srun -N$NN -n$NP -c7 --gpus-per-task=1 --gpu-bind=closest \
 fi
 
 if [ $X -eq 1 ]; then
-## For single run:
+## DDStore
 cleanup
 export SCOREP_EXPERIMENT_DIRECTORY=scorep-$JOBID-x$X-n$HYDRAGNN_NUM_WORKERS
 (time srun -N$NN -n$NP -c7 --gpus-per-task=1 --gpu-bind=closest python -u $CONSUMER) 2>&1 | tee run-X$X.log
 fi
 
 if [ $X -eq 2 ]; then
-## For single run:
+## MQ
 cleanup
 MASTER_PORT=8889 srun -N$NN -n$NP -c1 --gpus-per-task=0 python -u $PRODUCER --mq 2>&1 > run-X$X-role0.log &
 sleep 10
@@ -96,7 +96,7 @@ export SCOREP_EXPERIMENT_DIRECTORY=scorep-$JOBID-x$X-n$HYDRAGNN_NUM_WORKERS
 fi
 
 if [ $X -eq 3 ]; then
-## For producer-consumer stream run:
+## For producer-consumer mq-stream run:
 cleanup
 MASTER_PORT=8889 srun -N$NN -n$NP -c1 --gpus-per-task=0 python -u $PRODUCER --mq --stream --nchannels=$HYDRAGNN_NUM_WORKERS 2>&1 > run-X$X-role0.log &
 sleep 10
