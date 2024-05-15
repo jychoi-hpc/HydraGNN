@@ -55,20 +55,27 @@ def loss_function_selection(loss_function_string: str):
         return lambda x, y: torch.sqrt(torch.nn.functional.mse_loss(x, y))
 
 
-def save_model(model, optimizer, name, path="./logs/"):
+def save_model(model, optimizer, name, path="./logs/", epoch=None):
     """Save both model and optimizer state in a single checkpoint file"""
     _, world_rank = get_comm_size_and_rank()
     if hasattr(optimizer, "consolidate_state_dict"):
         optimizer.consolidate_state_dict()
     if world_rank == 0:
         path_name = os.path.join(path, name, name + ".pk")
-        torch.save(
-            {
-                "model_state_dict": model.state_dict(),
-                "optimizer_state_dict": optimizer.state_dict(),
-            },
-            path_name,
-        )
+        obj = {
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+        }
+        if epoch is not None:
+            obj["epoch"] = epoch
+            path_name = os.path.join(path, name, f"{name}_{epoch}.pk")
+        torch.save(obj, path_name)
+        if epoch is not None:
+            src = os.path.join(path, name, f"{name}_{epoch}.pk")
+            dst = os.path.join(path, name, name + ".pk")
+            if os.path.exists(dst):
+                os.remove(dst)
+            os.symlink(os.path.basename(src), dst)
 
 
 def get_summary_writer(name, path="./logs/"):
@@ -79,12 +86,16 @@ def get_summary_writer(name, path="./logs/"):
 
 
 def load_existing_model_config(model, config, path="./logs/", optimizer=None):
+    last_epoch = None
     if "continue" in config and config["continue"]:
         model_name = config["startfrom"]
-        load_existing_model(model, model_name, path, optimizer)
+        epoch = [None]
+        load_existing_model(model, model_name, path, optimizer, epoch)
+        last_epoch = epoch[0]
+    return last_epoch
 
 
-def load_existing_model(model, model_name, path="./logs/", optimizer=None):
+def load_existing_model(model, model_name, path="./logs/", optimizer=None, epoch=None):
     """Load both model and optimizer state from a single checkpoint file"""
     path_name = os.path.join(path, model_name, model_name + ".pk")
     map_location = {"cuda:%d" % 0: get_device_name()}
@@ -101,6 +112,8 @@ def load_existing_model(model, model_name, path="./logs/", optimizer=None):
     model.load_state_dict(state_dict)
     if (optimizer is not None) and ("optimizer_state_dict" in checkpoint):
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+    if (epoch is not None) and ("epoch" in checkpoint):
+        epoch[0] = checkpoint["epoch"]
 
 
 ## This function may cause OOM if dataset is too large
@@ -211,7 +224,7 @@ class Checkpoint:
         self.min_perf_metric = float("inf")
         self.min_delta = 0
 
-    def __call__(self, model, optimizer, perf_metric):
+    def __call__(self, model, optimizer, perf_metric, epoch):
 
         if (perf_metric > self.min_perf_metric + self.min_delta) or (
             self.count < self.warmup
@@ -220,5 +233,5 @@ class Checkpoint:
             return False
         else:
             self.min_perf_metric = perf_metric
-            save_model(model, optimizer, name=self.name, path=self.path)
+            save_model(model, optimizer, name=self.name, path=self.path, epoch=epoch)
             return True

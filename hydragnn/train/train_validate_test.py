@@ -64,6 +64,7 @@ def train_validate_test(
     plot_init_solution=True,
     plot_hist_solution=False,
     create_plots=False,
+    starting_epoch=0,
 ):
     num_epoch = config["Training"]["num_epoch"]
     EarlyStop = (
@@ -138,7 +139,9 @@ def train_validate_test(
     timer = Timer("train_validate_test")
     timer.start()
 
-    for epoch in range(0, num_epoch):
+    last_epoch = None
+    for epoch in range(starting_epoch, num_epoch):
+        last_epoch = epoch
         ## timer per epoch
         t0 = time.time()
         profiler.set_current_epoch(epoch)
@@ -205,7 +208,7 @@ def train_validate_test(
             )
 
         if SaveCheckpoint:
-            if checkpoint(model, optimizer, reduce_values_ranks(val_loss).item()):
+            if checkpoint(model, optimizer, reduce_values_ranks(val_loss).item(), epoch):
                 print_distributed(
                     verbosity, "Creating Checkpoint: %f" % checkpoint.min_perf_metric
                 )
@@ -278,6 +281,8 @@ def train_validate_test(
             model.module.loss_weights,
             config["Variables_of_interest"]["output_names"],
         )
+    
+    return last_epoch
 
 
 def get_head_indices(model, data):

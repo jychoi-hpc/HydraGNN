@@ -364,13 +364,17 @@ if __name__ == "__main__":
         optimizer, mode="min", factor=0.5, patience=5, min_lr=0.00001
     )
 
+    starting_epoch = 0
+    epoch = [0]
     hydragnn.utils.load_existing_model_config(
-        model, config["NeuralNetwork"]["Training"], optimizer=optimizer
+        model, config["NeuralNetwork"]["Training"], optimizer=optimizer, epoch=epoch
     )
+    if epoch[0] > 0:
+        starting_epoch = epoch[0] + 1
 
     ##################################################################################################################
 
-    hydragnn.train.train_validate_test(
+    last_epoch = hydragnn.train.train_validate_test(
         model,
         optimizer,
         train_loader,
@@ -382,9 +386,10 @@ if __name__ == "__main__":
         log_name,
         verbosity,
         create_plots=False,
+        starting_epoch=starting_epoch,
     )
 
-    hydragnn.utils.save_model(model, optimizer, log_name)
+    hydragnn.utils.save_model(model, optimizer, log_name, epoch=last_epoch)
     hydragnn.utils.print_timers(verbosity)
 
     if tr.has("GPTLTracer"):
