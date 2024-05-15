@@ -208,7 +208,9 @@ def train_validate_test(
             )
 
         if SaveCheckpoint:
-            if checkpoint(model, optimizer, reduce_values_ranks(val_loss).item(), epoch):
+            if checkpoint(
+                model, optimizer, reduce_values_ranks(val_loss).item(), epoch
+            ):
                 print_distributed(
                     verbosity, "Creating Checkpoint: %f" % checkpoint.min_perf_metric
                 )
@@ -281,7 +283,7 @@ def train_validate_test(
             model.module.loss_weights,
             config["Variables_of_interest"]["output_names"],
         )
-    
+
     return last_epoch
 
 
