@@ -20,7 +20,7 @@ from hydragnn.postprocess.visualizer import Visualizer
 from hydragnn.utils.print_utils import print_distributed, iterate_tqdm, log
 from hydragnn.utils.time_utils import Timer
 from hydragnn.utils.profile import Profiler
-from hydragnn.utils.distributed import get_device, print_peak_memory
+from hydragnn.utils.distributed import get_device, print_peak_memory, check_remaining
 from hydragnn.preprocess.load_data import HydraDataLoader
 from hydragnn.utils.model import Checkpoint, EarlyStopping
 
@@ -34,6 +34,8 @@ import torch.distributed as dist
 import pickle
 
 import hydragnn.utils.tracer as tr
+import time
+from mpi4py import MPI
 
 
 def get_nbatch(loader):
@@ -63,6 +65,7 @@ def train_validate_test(
     plot_init_solution=True,
     plot_hist_solution=False,
     create_plots=False,
+    starting_epoch=0,
 ):
     num_epoch = config["Training"]["num_epoch"]
     EarlyStop = (
@@ -137,7 +140,12 @@ def train_validate_test(
     timer = Timer("train_validate_test")
     timer.start()
 
-    for epoch in range(0, num_epoch):
+    last_epoch = None
+    for epoch in range(starting_epoch, num_epoch):
+        os.environ["HYDRAGNN_CURRENT_EPOCH"] = str(epoch)
+        last_epoch = epoch
+        ## timer per epoch
+        t0 = time.time()
         profiler.set_current_epoch(epoch)
         for dataloader in [train_loader, val_loader, test_loader]:
             if getattr(dataloader.sampler, "set_epoch", None) is not None:
@@ -202,7 +210,7 @@ def train_validate_test(
             )
 
         if SaveCheckpoint:
-            if checkpoint(model, optimizer, reduce_values_ranks(val_loss).item()):
+            if checkpoint(model, optimizer, reduce_values_ranks(val_loss).item(), epoch):
                 print_distributed(
                     verbosity, "Creating Checkpoint: %f" % checkpoint.min_perf_metric
                 )
@@ -218,6 +226,14 @@ def train_validate_test(
                     % epoch,
                 )
                 break
+
+        should_stop = check_remaining(t0)
+        if should_stop:
+            print_distributed(
+                verbosity,
+                "No time left. Early stop.",
+            )
+            break
 
     timer.stop()
 
@@ -267,6 +283,8 @@ def train_validate_test(
             model.module.loss_weights,
             config["Variables_of_interest"]["output_names"],
         )
+    
+    return last_epoch
 
 
 def get_head_indices(model, data):
@@ -426,17 +444,32 @@ def train(
     )
 
     nbatch = get_nbatch(loader)
-    tr.start("dataload")
+    syncopt = {"cudasync": True}
+    trace_level = int(os.getenv("HYDRAGNN_TRACE_LEVEL", "0"))
+    if trace_level > 0:
+        syncopt = {"cudasync": True}
+    tr.start("dataload", **syncopt)
     if use_ddstore:
+        tr.start("epoch_begin")
         loader.dataset.ddstore.epoch_begin()
+        tr.stop("epoch_begin")
+    if trace_level > 2:
+        k = tr.has("GPTLTracer", return_index=True)
+        timer_list = list()
     for ibatch, data in iterate_tqdm(
         enumerate(loader), verbosity, desc="Train", total=nbatch
     ):
         if ibatch >= nbatch:
             break
         if use_ddstore:
+            tr.start("epoch_end")
             loader.dataset.ddstore.epoch_end()
-        tr.stop("dataload")
+            tr.stop("epoch_end")
+        if trace_level > 1:
+            tr.start("dataload_sync", **syncopt)
+            MPI.COMM_WORLD.Barrier()
+            tr.stop("dataload_sync")
+        tr.stop("dataload", **syncopt)
         tr.start("zero_grad")
         with record_function("zero_grad"):
             opt.zero_grad()
@@ -445,34 +478,73 @@ def train(
         with record_function("get_head_indices"):
             head_index = get_head_indices(model, data)
         tr.stop("get_head_indices")
-        tr.start("forward")
+        tr.start("forward", **syncopt)
         with record_function("forward"):
+            if trace_level > 1:
+                tr.start("h2d", **syncopt)
             data = data.to(get_device())
+            if trace_level > 1:
+                tr.stop("h2d", **syncopt)
             pred = model(data)
             loss, tasks_loss = model.module.loss(pred, data.y, head_index)
-        tr.stop("forward")
-        tr.start("backward")
+            if trace_level > 1:
+                tr.start("forward_sync", **syncopt)
+                MPI.COMM_WORLD.Barrier()
+                tr.stop("forward_sync")
+        tr.stop("forward", **syncopt)
+        tr.start("backward", **syncopt)
         with record_function("backward"):
             loss.backward()
-        tr.stop("backward")
-        tr.start("opt_step")
+            if trace_level > 1:
+                tr.start("backward_sync", **syncopt)
+                MPI.COMM_WORLD.Barrier()
+                tr.stop("backward_sync")
+        tr.stop("backward", **syncopt)
+        tr.start("opt_step", **syncopt)
         # print_peak_memory(verbosity, "Max memory allocated before optimizer step")
         opt.step()
         # print_peak_memory(verbosity, "Max memory allocated after optimizer step")
-        tr.stop("opt_step")
+        tr.stop("opt_step", **syncopt)
         profiler.step()
         with torch.no_grad():
             total_error += loss * data.num_graphs
             num_samples_local += data.num_graphs
             for itask in range(len(tasks_loss)):
                 tasks_error[itask] += tasks_loss[itask] * data.num_graphs
+
+        if trace_level > 2:
+            timer = dict()
+            timer.update({"ibatch": ibatch, "num_nodes": data.num_nodes, "num_edges": data.num_edges})
+            timer.update({"dataload": tr.query("dataload")[k]})
+            timer.update({"dataload_sync": tr.query("dataload_sync")[k]})
+            timer.update({"forward": tr.query("forward")[k]})
+            timer.update({"forward_sync": tr.query("forward_sync")[k]})
+            timer.update({"backward": tr.query("backward")[k]})
+            timer.update({"backward_sync": tr.query("backward_sync")[k]})
+            timer_list.append(timer)
+
         if ibatch < (nbatch - 1):
-            tr.start("dataload")
-            if use_ddstore:
-                loader.dataset.ddstore.epoch_begin()
+            tr.start("dataload", **syncopt)
+        if use_ddstore:
+            if ibatch < (nbatch - 1):
+                tr.start("epoch_begin")
+            loader.dataset.ddstore.epoch_begin()
+            if ibatch < (nbatch - 1):
+                tr.stop("epoch_begin")
+    if use_ddstore:
+        loader.dataset.ddstore.epoch_end()
 
     train_error = total_error / num_samples_local
     tasks_error = tasks_error / num_samples_local
+
+    if trace_level > 2:
+        _, rank = get_comm_size_and_rank()
+        logname = os.getenv("HYDRAGNN_LOG_NAME", "")
+        current_epoch = int(os.getenv("HYDRAGNN_CURRENT_EPOCH", "0"))
+        fname = os.path.join("./logs", logname, f"timer-epoch{current_epoch}-rank{rank}.pickle")
+        with open(fname, "wb") as f:
+            pickle.dump(timer_list, f)
+
     return train_error, tasks_error
 
 
@@ -507,9 +579,10 @@ def validate(loader, model, verbosity, reduce_ranks=True):
         num_samples_local += data.num_graphs
         for itask in range(len(tasks_loss)):
             tasks_error[itask] += tasks_loss[itask] * data.num_graphs
-        if ibatch < (nbatch - 1):
-            if use_ddstore:
-                loader.dataset.ddstore.epoch_begin()
+        if use_ddstore:
+            loader.dataset.ddstore.epoch_begin()
+    if use_ddstore:
+        loader.dataset.ddstore.epoch_end()
 
     val_error = total_error / num_samples_local
     tasks_error = tasks_error / num_samples_local
@@ -532,7 +605,10 @@ def test(loader, model, verbosity, reduce_ranks=True, return_samples=True):
         and bool(int(os.getenv("HYDRAGNN_USE_ddstore", "0")))
     )
     nbatch = get_nbatch(loader)
+    _, rank = get_comm_size_and_rank()
 
+    if int(os.getenv("HYDRAGNN_DUMP_TESTDATA", "0")) == 1:
+        f = open(f"testdata_rank{rank}.pickle", "wb")
     if use_ddstore:
         loader.dataset.ddstore.epoch_begin()
     for ibatch, data in iterate_tqdm(
@@ -546,20 +622,62 @@ def test(loader, model, verbosity, reduce_ranks=True, return_samples=True):
         data = data.to(get_device())
         pred = model(data)
         error, tasks_loss = model.module.loss(pred, data.y, head_index)
+        ## FIXME: temporary
+        if int(os.getenv("HYDRAGNN_DUMP_TESTDATA", "0")) == 1:
+            offset = 0
+            for i in range(len(data)):
+                n = len(data[i].pos)
+                y0 = data[i].y[1:].flatten()
+                y1 = pred[1][offset : offset + n].flatten()
+                y2 = torch.norm(
+                    data[i].y[1:].reshape(-1, 3) - pred[1][offset : offset + n, :],
+                    dim=1,
+                ).mean()
+                data_to_save = dict()
+                data_to_save["energy_true"] = data[i].y[0].detach().cpu().item()
+                data_to_save["forces_true"] = y0.detach().cpu()
+                data_to_save["energy_pred"] = pred[0][i].detach().cpu().item()
+                data_to_save["forces_pred"] = y1.detach().cpu()
+                data_to_save["forces_average_error_per_atom"] = y2.detach().cpu()
+                pickle.dump(data_to_save, f)
+                if rank == 0:
+                    print(
+                        rank,
+                        ibatch,
+                        i,
+                        data[i].x.shape,
+                        data[i].y[0].item(),
+                        pred[0][i].item(),
+                        y2.item(),
+                    )
+                offset += n
+
         total_error += error * data.num_graphs
         num_samples_local += data.num_graphs
         for itask in range(len(tasks_loss)):
             tasks_error[itask] += tasks_loss[itask] * data.num_graphs
-        if ibatch < (nbatch - 1):
-            if use_ddstore:
-                loader.dataset.ddstore.epoch_begin()
+        if use_ddstore:
+            loader.dataset.ddstore.epoch_begin()
+    if use_ddstore:
+        loader.dataset.ddstore.epoch_end()
+
+    if int(os.getenv("HYDRAGNN_DUMP_TESTDATA", "0")) == 1:
+        f.close()
 
     test_error = total_error / num_samples_local
     tasks_error = tasks_error / num_samples_local
     true_values = [[] for _ in range(model.module.num_heads)]
     predicted_values = [[] for _ in range(model.module.num_heads)]
     if return_samples:
-        for data in loader:
+        if use_ddstore:
+            loader.dataset.ddstore.epoch_begin()
+        for ibatch, data in iterate_tqdm(
+            enumerate(loader), verbosity, desc="Sample", total=nbatch
+        ):
+            if ibatch >= nbatch:
+                break
+            if use_ddstore:
+                loader.dataset.ddstore.epoch_end()
             head_index = get_head_indices(model, data)
             data = data.to(get_device())
             ytrue = data.y
@@ -569,6 +687,10 @@ def test(loader, model, verbosity, reduce_ranks=True, return_samples=True):
                 head_val = ytrue[head_index[ihead]]
                 true_values[ihead].append(head_val)
                 predicted_values[ihead].append(head_pre)
+            if use_ddstore:
+                loader.dataset.ddstore.epoch_begin()
+        if use_ddstore:
+            loader.dataset.ddstore.epoch_end()
         for ihead in range(model.module.num_heads):
             predicted_values[ihead] = torch.cat(predicted_values[ihead], dim=0)
             true_values[ihead] = torch.cat(true_values[ihead], dim=0)
@@ -582,3 +704,4 @@ def test(loader, model, verbosity, reduce_ranks=True, return_samples=True):
                 predicted_values[ihead] = gather_tensor_ranks(predicted_values[ihead])
 
     return test_error, tasks_error, true_values, predicted_values
+

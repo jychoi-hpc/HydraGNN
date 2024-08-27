@@ -41,7 +41,7 @@ def _parse_results(stdout):
 
 
 def run(trial, dequed=None):
-    f = open(f"output-{trial.id}.txt", "w")
+    f = open(f"output-{SLURM_JOB_ID}-{trial.id}.txt", "w")
     python_exe = sys.executable
     python_script = os.path.join(os.path.dirname(__file__), "gfm.py")
 
@@ -56,9 +56,9 @@ def run(trial, dequed=None):
         [
             f"srun",
             f"-N {NNODES_PER_TRIAL} -n {NGPUS_PER_TRIAL}",
-            f"--ntasks-per-node=8 --gpus-per-node=8",
+            f"--ntasks-per-node=4 --gpus-per-node=4",
             f"--cpus-per-task {OMP_NUM_THREADS} --threads-per-core 1 --cpu-bind threads",
-            f"--gpus-per-task=1 --gpu-bind=closest",
+            f"--gpus-per-task=1",
             f"--export=ALL,{master_addr},HYDRAGNN_MAX_NUM_BATCH=100,HYDRAGNN_USE_VARIABLE_GRAPH_SIZE=1,HYDRAGNN_AGGR_BACKEND=mpi",
             f"--nodelist={nodelist}",
             f"--output {DEEPHYPER_LOG_DIR}/output_{SLURM_JOB_ID}_{trial.id}.txt",
@@ -79,9 +79,8 @@ def run(trial, dequed=None):
             f"--dim_headlayers={trial.parameters['dim_headlayers']}",
             f"--multi",
             f"--ddstore",
-            f'--multi_model_list="ANI1x,MPTrj,OC2020-20M,OC2022,qm7x"',
-            ## debugging
-            ##f'--multi_model_list="ANI1x"',
+            f'--multi_model_list="ANI1x,MPTrj,OC2020-2M,OC2022,qm7x"',
+            f"--num_samples=3200",
             f"--num_epoch=5",
             f"--log={log_name}",
         ]
@@ -117,7 +116,7 @@ def run(trial, dequed=None):
 
 if __name__ == "__main__":
 
-    log_name = "gfm"
+    log_name = f"gfm-{SLURM_JOB_ID}"
 
     # Choose the sampler (e.g., TPESampler or RandomSampler)
     from deephyper.evaluator import Evaluator, ProcessPoolEvaluator, queued
@@ -170,7 +169,7 @@ if __name__ == "__main__":
     )
 
     timeout = None
-    results = search.search(max_evals=10, timeout=timeout)
+    results = search.search(max_evals=100, timeout=timeout)
     print(results)
 
     sys.exit(0)

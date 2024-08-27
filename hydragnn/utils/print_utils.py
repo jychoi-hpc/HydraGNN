@@ -75,6 +75,7 @@ def setup_log(prefix):
     logger.propagate = False
     logger.setLevel(logging.DEBUG)
 
+    os.environ["HYDRAGNN_LOG_NAME"] = prefix
     os.makedirs("./logs/%s" % prefix, exist_ok=True)
     fname = "./logs/%s/run.log" % (prefix)
     fileHandler = logging.FileHandler(fname)

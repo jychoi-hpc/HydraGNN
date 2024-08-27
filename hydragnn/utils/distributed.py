@@ -19,6 +19,9 @@ from .print_utils import print_distributed
 
 import psutil
 import socket
+from datetime import timedelta
+import time
+import subprocess
 
 
 def find_ifname(myaddr):
@@ -153,14 +156,16 @@ def setup_ddp():
             if ifname is not None:
                 os.environ["GLOO_SOCKET_IFNAME"] = ifname
 
-        print_distributed(
-            1,
-            "Distributed data parallel: %s master at %s:%s"
-            % (backend, master_addr, master_port),
-        )
+        if world_rank == 0:
+            print(
+                "Distributed data parallel: %s master at %s:%s"
+                % (backend, master_addr, master_port),
+            )
 
         if not dist.is_initialized():
-            dist.init_process_group(backend=backend, init_method="env://")
+            dist.init_process_group(
+                backend=backend, init_method="env://", timeout=timedelta(seconds=1800)
+            )
 
     except KeyError:
         print("DDP has to be initialized within a job - Running in sequential mode")
@@ -262,3 +267,44 @@ def comm_reduce(x, op):
     torch.distributed.all_reduce(tx, op=op)
     y = tx.detach().cpu().numpy()
     return y
+
+
+## For early stop
+def timedelta_parse(text):
+    """
+    Convert input string to timedelta.
+    format: [[[d-]h:]m:]s
+    """
+    tokens = text.replace("-", ":").split(":")
+    return timedelta(
+        **{
+            key: float(val)
+            for val, key in zip(tokens[::-1], ("seconds", "minutes", "hours", "days"))
+        }
+    )
+
+
+def check_remaining(t0):
+    ## Early stop
+    world_size, world_rank = get_comm_size_and_rank()
+    jobid = os.getenv("SLURM_JOB_ID", None)
+    should_stop = False
+    device = get_device()
+    if jobid is not None:
+        if world_rank == 0:
+            try:
+                cmd = f"squeue -h -j {jobid} -o %L"
+                proc = subprocess.run(cmd.split(), stdout=subprocess.PIPE)
+                timestr = proc.stdout.decode("utf-8").strip()
+                left = timedelta_parse(timestr).total_seconds()
+                esitmated = time.time() - t0
+                should_stop = torch.tensor(left < esitmated, dtype=torch.bool).to(device)
+                print("should_stop:", left, esitmated, should_stop.item())
+            except:
+                should_stop = torch.tensor(False, dtype=torch.bool).to(device)
+        else:
+            should_stop = torch.tensor(False, dtype=torch.bool).to(device)
+
+        dist.broadcast(should_stop, src=0)
+        should_stop = should_stop.item()
+    return should_stop

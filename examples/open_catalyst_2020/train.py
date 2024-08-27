@@ -158,7 +158,12 @@ if __name__ == "__main__":
         const="pickle",
     )
     parser.set_defaults(format="adios")
+    parser.add_argument("--epochs", type=int, help="num_epoch", default=None)
+    parser.add_argument("--batch-size", type=int, help="batch_size", default=None)
     args = parser.parse_args()
+
+    if args.num_epoch is None:
+        args.num_epoch = args.epochs
 
     graph_feature_names = ["energy"]
     graph_feature_dims = [1]

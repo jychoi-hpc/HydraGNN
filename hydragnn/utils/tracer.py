@@ -11,6 +11,8 @@ import sys
 from collections import OrderedDict
 
 from abc import ABC, abstractmethod
+import torch
+from mpi4py import MPI
 
 
 class Tracer(ABC):
@@ -56,6 +58,8 @@ try:
         def reset(self):
             gp.reset()
 
+        def query(self, name):
+            return gp.query(name)
 
 except:
     pass
@@ -83,6 +87,8 @@ try:
         def reset(self):
             pass
 
+        def query(self, name):
+            pass
 
 except:
     pass
@@ -90,8 +96,16 @@ except:
 __tracer_list__ = dict()
 
 
-def has(name):
-    return name in __tracer_list__
+def has(name, return_index=False):
+    if return_index:
+        idx = -1
+        for i, k in enumerate(__tracer_list__):
+            if name == k:
+                idx = i
+                break
+        return idx
+    else:
+        return name in __tracer_list__
 
 
 def initialize(trlist=["GPTLTracer", "SCOREPTracer"], verbose=False, **kwargs):
@@ -105,12 +119,26 @@ def initialize(trlist=["GPTLTracer", "SCOREPTracer"], verbose=False, **kwargs):
             pass
 
 
-def start(name):
+def start(name, cudasync=False, sync=False):
+    if cudasync and torch.cuda.is_available():
+        try:
+            torch.cuda.synchronize()
+        except:
+            pass
+    if sync:
+        MPI.COMM_WORLD.Barrier()
     for tr in __tracer_list__.values():
         tr.start(name)
 
 
-def stop(name):
+def stop(name, cudasync=False, sync=False):
+    if cudasync and torch.cuda.is_available():
+        try:
+            torch.cuda.synchronize()
+        except:
+            pass
+    if sync:
+        MPI.COMM_WORLD.Barrier()
     for tr in __tracer_list__.values():
         tr.stop(name)
 
@@ -128,6 +156,12 @@ def disable():
 def reset():
     for tr in __tracer_list__.values():
         tr.reset()
+
+def query(name):
+    ans = list()
+    for tr in __tracer_list__.values():
+        ans.append(tr.query(name))
+    return ans
 
 
 def profile(x_or_func=None, *decorator_args, **decorator_kws):
