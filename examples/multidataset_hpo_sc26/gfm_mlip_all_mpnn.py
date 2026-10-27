@@ -15,7 +15,7 @@ import numpy as np
 import hydragnn
 from hydragnn.utils.profiling_and_tracing.time_utils import Timer
 from hydragnn.utils.model import print_model, print_optimizer
-from hydragnn.utils.datasets.distdataset import DistDataset
+from hydragnn.utils.datasets.distdataset import DistDataset, DistDatasetReader
 from hydragnn.utils.datasets.pickledataset import SimplePickleDataset
 
 import hydragnn.utils.profiling_and_tracing.tracer as tr
@@ -41,6 +41,8 @@ from torch.distributed.device_mesh import init_device_mesh, DeviceMesh
 from hydragnn.models import MultiTaskModelMP, DualOptimizer
 from contextlib import nullcontext
 import re
+import pickle
+import time
 
 ## FIMME
 torch.backends.cudnn.enabled = False
@@ -55,6 +57,14 @@ try:
     print("resource.RLIMIT_NOFILE:", soft, hard)
 except:
     pass
+
+
+def wait_for_file(path, timeout_s, poll_s=2.0):
+    deadline = time.time() + timeout_s
+    while not os.path.exists(path):
+        if time.time() > deadline:
+            raise TimeoutError(f"Timed out waiting for {path}")
+        time.sleep(poll_s)
 
 
 def info(*args, logtype="info", sep=" "):
@@ -102,6 +112,18 @@ if __name__ == "__main__":
     )
     parser.add_argument("--ddstore", action="store_true", help="ddstore dataset")
     parser.add_argument("--ddstore_width", type=int, help="ddstore width", default=None)
+    ## DDStore method 2: a core srun step holds the data; trials read it
+    parser.add_argument(
+        "--ddstore_core",
+        action="store_true",
+        help="DDStore method 2 core: load and publish data, then wait for <handshake_dir>/stop",
+    )
+    parser.add_argument(
+        "--ddstore_handshake_dir",
+        type=str,
+        help="DDStore method 2 handshake directory; without --ddstore_core, read data from the core",
+        default=None,
+    )
     parser.add_argument("--shmem", action="store_true", help="shmem")
     parser.add_argument("--log", help="log name")
     parser.add_argument("--logfilename", help="log filename", default="run.log")
@@ -361,9 +383,24 @@ if __name__ == "__main__":
             if "epoch_start" in config["NeuralNetwork"]["Training"]:
                 del config["NeuralNetwork"]["Training"]["epoch_start"]
 
+    ## DDStore method 2 roles
+    ddstore_reader = (
+        args.ddstore
+        and args.ddstore_handshake_dir is not None
+        and not args.ddstore_core
+    )
+    if args.ddstore_core:
+        assert args.ddstore and args.ddstore_handshake_dir is not None
+        assert not args.task_parallel and args.ddstore_width is None
+        os.environ["HYDRAGNN_DDSTORE_METHOD"] = "2"
+
     ##################################################################################################################
-    # Always initialize for multi-rank training.
-    comm_size, rank = hydragnn.utils.distributed.setup_ddp()
+    if args.ddstore_core:
+        ## The core holds data in host memory: MPI only, no GPU, no torch.distributed
+        comm_size, rank = MPI.COMM_WORLD.Get_size(), MPI.COMM_WORLD.Get_rank()
+    else:
+        # Always initialize for multi-rank training.
+        comm_size, rank = hydragnn.utils.distributed.setup_ddp()
     ##################################################################################################################
 
     if rank == 0:
@@ -386,7 +423,10 @@ if __name__ == "__main__":
 
     log_name = "GFM" if args.log is None else args.log
     hydragnn.utils.print.setup_log(log_name, filename=args.logfilename)
-    writer = hydragnn.utils.model.get_summary_writer(log_name)
+    ## Without torch.distributed every core rank would count as rank 0
+    writer = (
+        None if args.ddstore_core else hydragnn.utils.model.get_summary_writer(log_name)
+    )
 
     log("Command: {0}\n".format(" ".join([x for x in sys.argv])), rank=0)
 
@@ -397,7 +437,7 @@ if __name__ == "__main__":
     timer = Timer("load_data")
     timer.start()
 
-    device = get_device()
+    device = torch.device("cpu") if args.ddstore_core else get_device()
     device_type = str(device).split(":")[0]
     print("device, device_type:", device, device_type)
 
@@ -431,7 +471,26 @@ if __name__ == "__main__":
         "atomic_numbers",
     ]
 
-    if args.ddstore:
+    if ddstore_reader:
+        ## DDStore method 2 trial: read what the core published
+        wait_for_file(
+            os.path.join(args.ddstore_handshake_dir, "ready"),
+            float(os.getenv("DDSTORE_HANDSHAKE_TIMEOUT_S", "1800")),
+        )
+        trainset = DistDatasetReader("trainset", args.ddstore_handshake_dir)
+        valset = DistDatasetReader("valset", args.ddstore_handshake_dir)
+        testset = DistDatasetReader("testset", args.ddstore_handshake_dir)
+        with open(os.path.join(args.ddstore_handshake_dir, "extra.pkl"), "rb") as f:
+            extra = pickle.load(f)
+        num_samples_list = extra["num_samples_list"]
+        for ds in [trainset, valset, testset]:
+            ds.pna_deg = extra["pna_deg"]
+            if config["NeuralNetwork"]["Architecture"].get("avg_num_neighbors"):
+                ds.avg_num_neighbors = config["NeuralNetwork"]["Architecture"][
+                    "avg_num_neighbors"
+                ]
+        log0("DDStore method 2 reader:", args.ddstore_handshake_dir, trainset.n_core)
+    elif args.ddstore:
         if rank == 0:
             ndata_list = list()
             pna_deg_list = list()
@@ -821,6 +880,8 @@ if __name__ == "__main__":
         assert not (args.shmem and args.ddstore), "Cannot use both ddstore and shmem"
         if args.ddstore:
             opt = {"ddstore_width": args.ddstore_width, "local": True}
+            if args.ddstore_core:
+                opt["handshake_dir"] = args.ddstore_handshake_dir
             if args.task_parallel:
                 trainset = DistDataset(trainset, "trainset", local_comm, **opt)
                 valset = DistDataset(valset, "valset", local_comm, **opt)
@@ -868,6 +929,35 @@ if __name__ == "__main__":
         args.oversampling = None
         args.num_samples = None
         os.environ["HYDRAGNN_CUSTOM_DATALOADER"] = "0"
+
+    if args.ddstore_core:
+        ## Published: tell readers, then hold the data until the job writes
+        ## <handshake_dir>/stop
+        comm.Barrier()
+        if rank == 0:
+            with open(os.path.join(args.ddstore_handshake_dir, "extra.pkl"), "wb") as f:
+                pickle.dump(
+                    {"pna_deg": pna_deg, "num_samples_list": num_samples_list}, f
+                )
+            with open(os.path.join(args.ddstore_handshake_dir, "ready"), "w") as f:
+                f.write("ready\n")
+            print(
+                "DDStore core ready:",
+                len(trainset),
+                len(valset),
+                len(testset),
+                flush=True,
+            )
+            wait_for_file(os.path.join(args.ddstore_handshake_dir, "stop"), 1e9)
+        ## Non-blocking barrier so the other ranks sleep instead of spinning
+        req = comm.Ibarrier()
+        while not req.Test():
+            time.sleep(2.0)
+        for ds in [trainset, valset, testset]:
+            ds.ddstore.free()
+        log0("DDStore core stopped.")
+        sys.exit(0)
+
     log0(
         "trainset,valset,testset size: %d %d %d"
         % (len(trainset), len(valset), len(testset))

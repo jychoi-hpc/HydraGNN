@@ -19,6 +19,7 @@ import hydragnn.utils.profiling_and_tracing.tracer as tr
 from tqdm import tqdm
 from io import BytesIO
 import os
+import pickle
 
 
 def allgatherv_numpy(send: np.ndarray, comm=MPI.COMM_WORLD):
@@ -69,6 +70,22 @@ def allgatherv_numpy(send: np.ndarray, comm=MPI.COMM_WORLD):
     return recv
 
 
+## DistDataset attributes a DistDatasetReader needs to read what a DDStore
+## method 2 core published
+_READER_META_KEYS = (
+    "total_ns",
+    "keys",
+    "variable_shape",
+    "variable_dim",
+    "variable_dtype",
+    "variable_count",
+    "variable_offset",
+    "ddstore_store_per_sample",
+    "record_count",
+    "record_offset",
+)
+
+
 class DistDataset(AbstractBaseDataset):
     """Distributed datasets class"""
 
@@ -81,6 +98,7 @@ class DistDataset(AbstractBaseDataset):
         local=False,
         var_config=None,
         ddstore_store_per_sample=True,  ## True for per-sample saving. False for feature-first saving
+        handshake_dir=None,  ## DDStore method 2: publish to readers through this directory
     ):
         super().__init__()
 
@@ -102,7 +120,18 @@ class DistDataset(AbstractBaseDataset):
         self.ddstore_comm = self.comm.Split(self.rank // self.ddstore_width, self.rank)
         self.ddstore_comm_rank = self.ddstore_comm.Get_rank()
         self.ddstore_comm_size = self.ddstore_comm.Get_size()
-        self.ddstore = dds.PyDDStore(self.ddstore_comm, method=ddstore_method)
+        if ddstore_method == 2:
+            ## Method 2 core: every rank of ddstore_comm publishes; readers in
+            ## other srun steps join through handshake_dir
+            assert handshake_dir is not None, "DDStore method 2 needs handshake_dir"
+            assert (
+                self.ddstore_comm_size == self.comm_size
+            ), "DDStore method 2 does not support ddstore_width"
+            self.ddstore = dds.PyDDStore(
+                self.ddstore_comm, method=2, handshake_dir=handshake_dir
+            )
+        else:
+            self.ddstore = dds.PyDDStore(self.ddstore_comm, method=ddstore_method)
         self.ddstore_store_per_sample = ddstore_store_per_sample
 
         ## set total before set subset
@@ -271,6 +300,14 @@ class DistDataset(AbstractBaseDataset):
 
         log0("DDStore total (GB):", nbytes / 1024 / 1024 / 1024)
 
+        if ddstore_method == 2 and self.ddstore_comm_rank == 0:
+            meta = {k: getattr(self, k, None) for k in _READER_META_KEYS}
+            meta["n_core"] = self.ddstore_comm_size
+            meta_path = os.path.join(handshake_dir, "%s.meta.pkl" % label)
+            with open(meta_path + ".tmp", "wb") as f:
+                pickle.dump(meta, f)
+            os.replace(meta_path + ".tmp", meta_path)
+
         ## FIXME: Using the same routine in SimplePickleDataset. We need to make as a common function
         self.var_config = var_config
 
@@ -348,3 +385,31 @@ class DistDataset(AbstractBaseDataset):
 
         self.update_data_object(data_object)
         return data_object
+
+
+class DistDatasetReader(DistDataset):
+    """Read a DistDataset that a DDStore method 2 core published.
+
+    Joins the core's store in handshake_dir without MPI and reads samples
+    by global index over RDMA, so the reader's size is independent of the
+    core's. get()/len() are DistDataset's.
+    """
+
+    def __init__(self, label, handshake_dir):
+        AbstractBaseDataset.__init__(self)
+        with open(os.path.join(handshake_dir, "%s.meta.pkl" % label), "rb") as f:
+            meta = pickle.load(f)
+        for k in _READER_META_KEYS:
+            setattr(self, k, meta[k])
+        self.label = label
+        self.n_core = meta["n_core"]
+        self.var_config = None
+
+        self.ddstore = dds.PyDDStore(
+            None, method=2, handshake_dir=handshake_dir, n_core=self.n_core
+        )
+        if self.ddstore_store_per_sample:
+            self.ddstore.join("%s/%s" % (label, "record_array"))
+        else:
+            for k in self.keys:
+                self.ddstore.join("%s/%s" % (label, k))
