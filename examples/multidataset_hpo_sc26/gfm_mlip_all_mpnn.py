@@ -66,6 +66,31 @@ except:
     pass
 
 
+class AtomicNumberInputDataset(torch.utils.data.Dataset):
+    """Keep only atomic numbers in data.x (column 0 of the stored ADIOS x).
+
+    The stored x is [atomic_number, pos(3), forces(3)]; the model is built
+    with input_dim=1 from the named "Variables" schema. Unknown attributes
+    (ddstore, pna_deg, ...) are delegated to the wrapped dataset.
+    """
+
+    def __init__(self, dataset):
+        self.dataset = dataset
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, index):
+        data = self.dataset[index].clone()
+        data.x = data.x[:, :1]
+        return data
+
+    def __getattr__(self, name):
+        if name == "dataset":
+            raise AttributeError(name)
+        return getattr(self.dataset, name)
+
+
 def info(*args, logtype="info", sep=" "):
     getattr(logging, logtype)(sep.join(map(str, args)))
 
@@ -921,6 +946,10 @@ if __name__ == "__main__":
         group = branch_group
     elif args.ddstore and args.ddstore_width is not None:
         group = trainset.ddstore_comm
+
+    trainset = AtomicNumberInputDataset(trainset)
+    valset = AtomicNumberInputDataset(valset)
+    testset = AtomicNumberInputDataset(testset)
 
     (
         train_loader,
