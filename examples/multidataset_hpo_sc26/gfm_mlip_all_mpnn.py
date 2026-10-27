@@ -1,3 +1,8 @@
+import time
+
+## Wall-clock start-up marker (see "startup" in the timing JSON)
+_PROCESS_START = time.time()
+
 import os, json, copy
 import logging
 import sys
@@ -42,7 +47,8 @@ from hydragnn.models import MultiTaskModelMP, DualOptimizer
 from contextlib import nullcontext
 import re
 import pickle
-import time
+
+_IMPORTS_DONE = time.time()
 
 ## FIMME
 torch.backends.cudnn.enabled = False
@@ -65,6 +71,63 @@ def wait_for_file(path, timeout_s, poll_s=2.0):
         if time.time() > deadline:
             raise TimeoutError(f"Timed out waiting for {path}")
         time.sleep(poll_s)
+
+
+## Per-rank stage times (seconds) for the timing JSON (HYDRAGNN_TIMING_DIR)
+TIMING = dict()
+
+
+def timed(name, t0):
+    """Add the time since t0 to TIMING[name] and return a new t0."""
+    t1 = time.perf_counter()
+    TIMING[name] = TIMING.get(name, 0.0) + t1 - t0
+    return t1
+
+
+def write_timing(comm, rank, path, meta):
+    """Gather TIMING (and the GPTL trace regions) from all ranks and write
+    their mean/min/max across ranks to path as JSON (rank 0)."""
+    local = dict(TIMING)
+    if tr.has("GPTLTracer"):
+        for k, v in tr.__tracer_list__["GPTLTracer"].hist.items():
+            local["trace_" + k] = float(sum(w for _, w in v))
+    all_local = comm.gather(local, root=0)
+    if rank != 0:
+        return
+    stats = dict()
+    for k in sorted(set().union(*all_local)):
+        vals = np.array([d[k] for d in all_local if k in d], dtype=np.float64)
+        stats[k] = {
+            "mean": float(vals.mean()),
+            "min": float(vals.min()),
+            "max": float(vals.max()),
+            "n": len(vals),
+        }
+    payload = dict(meta)
+    payload["timings_seconds"] = stats
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path + ".tmp", "w") as f:
+        json.dump(payload, f, indent=2, sort_keys=True)
+    os.replace(path + ".tmp", path)
+    print("Timing file:", path, flush=True)
+
+
+def timing_meta(args, comm_size, method):
+    return {
+        "trial_id": os.getenv("HYDRAGNN_TRIAL_ID"),
+        "log": args.log,
+        "method": method,
+        "comm_size": comm_size,
+        "nnodes": int(os.getenv("SLURM_STEP_NUM_NODES", "0")),
+        "hostname": MPI.Get_processor_name(),
+        ## args.parameters is vars(args) itself (circular)
+        "args": {k: v for k, v in vars(args).items() if k != "parameters"},
+        "env": {
+            k: v
+            for k, v in os.environ.items()
+            if k.startswith(("DDSTORE_", "FI_", "NCCL_", "HYDRAGNN_"))
+        },
+    }
 
 
 def info(*args, logtype="info", sep=" "):
@@ -395,12 +458,14 @@ if __name__ == "__main__":
         os.environ["HYDRAGNN_DDSTORE_METHOD"] = "2"
 
     ##################################################################################################################
+    t = time.perf_counter()
     if args.ddstore_core:
         ## The core holds data in host memory: MPI only, no GPU, no torch.distributed
         comm_size, rank = MPI.COMM_WORLD.Get_size(), MPI.COMM_WORLD.Get_rank()
     else:
         # Always initialize for multi-rank training.
         comm_size, rank = hydragnn.utils.distributed.setup_ddp()
+    timed("setup_ddp", t)
     ##################################################################################################################
 
     if rank == 0:
@@ -436,6 +501,7 @@ if __name__ == "__main__":
     tr.disable()
     timer = Timer("load_data")
     timer.start()
+    load_t0 = time.perf_counter()
 
     device = torch.device("cpu") if args.ddstore_core else get_device()
     device_type = str(device).split(":")[0]
@@ -473,10 +539,12 @@ if __name__ == "__main__":
 
     if ddstore_reader:
         ## DDStore method 2 trial: read what the core published
+        t = time.perf_counter()
         wait_for_file(
             os.path.join(args.ddstore_handshake_dir, "ready"),
             float(os.getenv("DDSTORE_HANDSHAKE_TIMEOUT_S", "1800")),
         )
+        t = timed("data_wait_ready", t)
         trainset = DistDatasetReader("trainset", args.ddstore_handshake_dir)
         valset = DistDatasetReader("valset", args.ddstore_handshake_dir)
         testset = DistDatasetReader("testset", args.ddstore_handshake_dir)
@@ -489,8 +557,10 @@ if __name__ == "__main__":
                 ds.avg_num_neighbors = config["NeuralNetwork"]["Architecture"][
                     "avg_num_neighbors"
                 ]
+        timed("data_reader_join", t)
         log0("DDStore method 2 reader:", args.ddstore_handshake_dir, trainset.n_core)
     elif args.ddstore:
+        t = time.perf_counter()
         if rank == 0:
             ndata_list = list()
             pna_deg_list = list()
@@ -742,6 +812,7 @@ if __name__ == "__main__":
                 fname = dstdir
         comm.Barrier()
 
+        t = timed("data_metadata", t)
         print("mymodel:", rank, mycolor, mymodel)
         trainset = AdiosDataset(
             fname,
@@ -877,6 +948,7 @@ if __name__ == "__main__":
         #     len(testset),
         # )
 
+        t = timed("data_adios_load", t)
         assert not (args.shmem and args.ddstore), "Cannot use both ddstore and shmem"
         if args.ddstore:
             opt = {"ddstore_width": args.ddstore_width, "local": True}
@@ -908,6 +980,7 @@ if __name__ == "__main__":
                 trainset.avg_num_neighbors = avg_num_neighbors
                 valset.avg_num_neighbors = avg_num_neighbors
                 testset.avg_num_neighbors = avg_num_neighbors
+        timed("data_ddstore_publish", t)
     else:
         ## No DDStore. Each process opens multiple adios files.
         filename_list = list()
@@ -934,6 +1007,12 @@ if __name__ == "__main__":
         ## Published: tell readers, then hold the data until the job writes
         ## <handshake_dir>/stop
         comm.Barrier()
+        timed("core_ready", load_t0)
+        TIMING["startup_imports"] = _IMPORTS_DONE - _PROCESS_START
+        core_meta = timing_meta(args, comm_size, 2)
+        for d in [args.ddstore_handshake_dir, os.getenv("HYDRAGNN_TIMING_DIR")]:
+            if d is not None:
+                write_timing(comm, rank, os.path.join(d, "core_timing.json"), core_meta)
         if rank == 0:
             with open(os.path.join(args.ddstore_handshake_dir, "extra.pkl"), "wb") as f:
                 pickle.dump(
@@ -973,6 +1052,7 @@ if __name__ == "__main__":
     elif args.ddstore and args.ddstore_width is not None:
         group = trainset.ddstore_comm
 
+    t = time.perf_counter()
     (train_loader, val_loader, test_loader,) = hydragnn.preprocess.create_dataloaders(
         trainset,
         valset,
@@ -985,6 +1065,7 @@ if __name__ == "__main__":
     )
     ## Good to sync with everyone right after DDStore setup
     comm.Barrier()
+    t = timed("create_dataloaders", t)
 
     # for data in train_loader:
     #    print("Pei debugging 3", data)
@@ -998,10 +1079,16 @@ if __name__ == "__main__":
         train_loader.dataset.ddstore.epoch_end()
     ## Good to sync with everyone right after DDStore setup
     comm.Barrier()
+    timed("update_config", t)
 
     hydragnn.utils.input_config_parsing.save_config(config, log_name)
 
+    timed("load_data", load_t0)
+    ## Timer.stop reduces over NCCL: the first collective, which sets up the
+    ## RCCL communicators. Timed on its own so load_data is data only.
+    t = time.perf_counter()
     timer.stop()
+    t = timed("nccl_init", t)
 
     precision = args.precision.lower()
     config["NeuralNetwork"]["Training"]["precision"] = precision
@@ -1057,6 +1144,8 @@ if __name__ == "__main__":
         "enable_interatomic_potential", False
     )
 
+    t = timed("create_model", t)
+    train_start_wall = time.time()
     with context:
         hydragnn.train.train_validate_test(
             model,
@@ -1074,12 +1163,34 @@ if __name__ == "__main__":
             precision=precision,
         )
 
+    t = timed("train_validate_test", t)
     hydragnn.utils.model.save_model(model, optimizer, log_name)
+    timed("save_model", t)
     hydragnn.utils.profiling_and_tracing.print_timers(verbosity)
     if writer is not None:
         writer.close()
 
     tr.save(log_name)
+
+    timing_dir = os.getenv("HYDRAGNN_TIMING_DIR")
+    if timing_dir is not None:
+        ## Epoch 0 separately (warm-up); the trace_* regions cover epochs 1..N
+        epochs = sys.modules["hydragnn.train.train_validate_test"].epoch_timings
+        for i, e in enumerate(epochs):
+            prefix = "epoch0_" if i == 0 else "epochs_"
+            for k in ["train", "validate", "test", "total"]:
+                TIMING[prefix + k] = TIMING.get(prefix + k, 0.0) + e[k]
+        TIMING["startup_imports"] = _IMPORTS_DONE - _PROCESS_START
+        TIMING["startup_process_to_train"] = train_start_wall - _PROCESS_START
+        launch = os.getenv("TRIAL_LAUNCH_TIME")
+        if launch is not None:
+            TIMING["startup_launch_to_python"] = _PROCESS_START - float(launch)
+            TIMING["startup_launch_to_train"] = train_start_wall - float(launch)
+        meta = timing_meta(args, comm_size, 2 if ddstore_reader else 1)
+        meta["num_epochs"] = len(epochs)
+        write_timing(
+            comm, rank, os.path.join(timing_dir, "timings_%s.json" % log_name), meta
+        )
 
     if dist.is_initialized():
         dist.destroy_process_group()

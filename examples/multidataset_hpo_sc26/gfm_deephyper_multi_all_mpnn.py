@@ -50,7 +50,11 @@ DDSTORE_HANDSHAKE_DIR = (
     if os.getenv("HYDRAGNN_DDSTORE_METHOD") == "2"
     else None
 )
+## Nodes kept for the DDStore core (ddstore-core.sh); also left out of the
+## queue by a method-1 search in the same job (COMPARE_TIMINGS=1)
 DDSTORE_CORE_NODES = [n for n in os.getenv("CORE_NODES", "").split(",") if n]
+## Separates the searches of one job (COMPARE_TIMINGS=1)
+RUN_TAG = os.getenv("HYDRAGNN_RUN_TAG")
 VNI_WRAP = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vni-wrap.sh")
 
 
@@ -72,6 +76,8 @@ def run(trial, dequed=None):
     python_script = os.path.join(os.path.dirname(__file__), "gfm_mlip_all_mpnn.py")
 
     log_name = f"gfm_{SLURM_JOB_ID}_{trial.id}"
+    if RUN_TAG is not None:
+        log_name = f"gfm_{SLURM_JOB_ID}_{RUN_TAG}_{trial.id}"
     master_addr = f"HYDRAGNN_MASTER_ADDR={dequed[0]}"
     nodelist = ",".join(dequed)
 
@@ -92,6 +98,10 @@ def run(trial, dequed=None):
         ## A failed rank ends the step, so its nodes go back to the queue
         prefix = f"{prefix} --kill-on-bad-exit=1 {VNI_WRAP}"
 
+    ## Launch time and trial id for the trial's timing JSON (HYDRAGNN_TIMING_DIR)
+    prefix = (
+        f"export TRIAL_LAUNCH_TIME=$(date +%s.%N) HYDRAGNN_TRIAL_ID={trial.id}; {prefix}"
+    )
     command = " ".join(
         [
             prefix,
@@ -142,6 +152,7 @@ def run(trial, dequed=None):
 
     output = -math.inf
     num_pattern = r"[-+]?(?:\d*\.\d+|\d+\.?)(?:[eE][-+]?\d+)?|[-+]?(?:inf|nan)"
+    trial_start = time.time()
     try:
         result = subprocess.check_output(command, shell=True, stderr=subprocess.STDOUT)
         fout = open(f"{DEEPHYPER_LOG_DIR}/error_{SLURM_JOB_ID}_{trial.id}.txt", "r")
@@ -166,7 +177,7 @@ def run(trial, dequed=None):
     print("Output:", output, flush=True, file=f)
     objective = output
     print(objective, flush=True, file=f)
-    metadata = {"some_info": "some_value"}
+    metadata = {"trial_start": trial_start, "trial_end": time.time()}
     f.close()
 
     return {"objective": objective, "metadata": metadata}
@@ -192,6 +203,7 @@ if __name__ == "__main__":
     log_name = f"gfm-{SLURM_JOB_ID}"
     if len(mpnn_type_list) == 1:
         log_name = f"gfm_{mpnn_type_list[0]}-{SLURM_JOB_ID}"
+    log_name = os.getenv("HYDRAGNN_DEEPHYPER_DIR", log_name)
 
     from deephyper.hpo import HpProblem, CBO
     from deephyper.evaluator import ProcessPoolEvaluator, queued
@@ -286,8 +298,7 @@ if __name__ == "__main__":
 
     # Create the node queue
     queue, _ = read_node_list()
-    if DDSTORE_HANDSHAKE_DIR is not None:
-        queue = [n for n in queue if n not in DDSTORE_CORE_NODES]
+    queue = [n for n in queue if n not in DDSTORE_CORE_NODES]
     print("The queue:", queue, len(queue))
     print("NNODES_PER_TRIAL", NNODES_PER_TRIAL)
     print("NUM_CONCURRENT_TRIALS", NUM_CONCURRENT_TRIALS)

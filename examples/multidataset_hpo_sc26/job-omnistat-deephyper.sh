@@ -137,7 +137,7 @@ export HYDRAGNN_USE_FSDP=0
 export HYDRAGNN_TRACE_LEVEL=1
 export HYDRAGNN_MAX_NUM_BATCH=100
 export BATCH_SIZE=16 #200
-export NUM_EPOCH=20
+export NUM_EPOCH=${NUM_EPOCH:-20}
 
 # 2: a core srun step holds the data for the whole search and trial steps
 # read it; 1: every trial loads its own DDStore.
@@ -169,11 +169,18 @@ export datadir14=QM7X
 export datadir15=transition1x
 
 # export MULTI_MODEL_LIST=$datadir0,$datadir1,$datadir2,$datadir3,$datadir4,$datadir5,$datadir6,$datadir7,$datadir8,$datadir9,$datadir10,$datadir11,$datadir12,$datadir13,$datadir14,$datadir15
-export MULTI_MODEL_LIST=$datadir0
+export MULTI_MODEL_LIST=${MULTI_MODEL_LIST:-$datadir0}
+
+# COMPARE_TIMINGS=1: run a method-1 search, then a method-2 search on the
+# same trial nodes, and compare their timing JSONs (compare-timings.py).
+# The core nodes stay idle during the method-1 search.
+# COMPARE_ORDER=ddstore_first runs the method-2 search first.
+COMPARE_TIMINGS=${COMPARE_TIMINGS:-0}
+COMPARE_ORDER=${COMPARE_ORDER:-plain_first}
 
 # Configuration
-export NNODES_PER_TRIAL=2 #256
-if [ "$HYDRAGNN_DDSTORE_METHOD" = "2" ]; then
+export NNODES_PER_TRIAL=${NNODES_PER_TRIAL:-2} #256
+if [ "$HYDRAGNN_DDSTORE_METHOD" = "2" ] || [ "$COMPARE_TIMINGS" = "1" ]; then
     source $HYDRAGNN_ROOT/examples/multidataset_hpo_sc26/ddstore-core.sh
     ddstore_split_nodes
 else
@@ -202,19 +209,65 @@ ${OMNISTAT_WRAPPER} usermode --start --interval 15
 # [ -z $MPNN_TYPE ] && MPNN_TYPE=EGNN,SchNet,DimeNet,MACE,PAINN,PNAEq
 [ -z $MPNN_TYPE ] && MPNN_TYPE=SchNet
 
-if [ "$HYDRAGNN_DDSTORE_METHOD" = "2" ]; then
-    # Same data options as the trials (gfm_deephyper_multi_all_mpnn.py run())
-    start_core "--inputfile=gfm_mlip.json --multi --ddstore --precision=fp64 \
-        --multi_model_list=$MULTI_MODEL_LIST --batch_size=$BATCH_SIZE \
-        --num_samples=$(( BATCH_SIZE * HYDRAGNN_MAX_NUM_BATCH )) --oversampling \
-        --oversampling_num_samples=$(( BATCH_SIZE * HYDRAGNN_MAX_NUM_BATCH ))"
-fi
+# Same data options as the trials (gfm_deephyper_multi_all_mpnn.py run())
+CORE_DATA_ARGS="--inputfile=gfm_mlip.json --multi --ddstore --precision=fp64 \
+    --multi_model_list=$MULTI_MODEL_LIST --batch_size=$BATCH_SIZE \
+    --num_samples=$(( BATCH_SIZE * HYDRAGNN_MAX_NUM_BATCH )) --oversampling \
+    --oversampling_num_samples=$(( BATCH_SIZE * HYDRAGNN_MAX_NUM_BATCH ))"
 
-cmd python -u $HYDRAGNN_ROOT/examples/multidataset_hpo_sc26/gfm_deephyper_multi_all_mpnn.py \
-    --mpnn_type=$MPNN_TYPE --max_evals=$((NUM_CONCURRENT_TRIALS*2))
+# One DeepHyper search with DDStore method $1, writing trial logs to
+# $DEEPHYPER_LOG_DIR, timing JSONs to $HYDRAGNN_TIMING_DIR and the start/end
+# times and node counts to $HYDRAGNN_TIMING_DIR/search.json
+function run_search() {
+    export HYDRAGNN_DDSTORE_METHOD=$1
+    mkdir -p $DEEPHYPER_LOG_DIR $HYDRAGNN_TIMING_DIR
+    local t_start=$(date +%s.%N) core_nodes=0
+    if [ "$HYDRAGNN_DDSTORE_METHOD" = "2" ]; then
+        start_core "$CORE_DATA_ARGS"
+        core_nodes=$NNODES_PER_TRIAL
+    fi
+    local t_search_start=$(date +%s.%N)
+    cmd python -u $HYDRAGNN_ROOT/examples/multidataset_hpo_sc26/gfm_deephyper_multi_all_mpnn.py \
+        --mpnn_type=$MPNN_TYPE --max_evals=${MAX_EVALS:-$((NUM_CONCURRENT_TRIALS*2))}
+    local t_search_end=$(date +%s.%N)
+    if [ "$HYDRAGNN_DDSTORE_METHOD" = "2" ]; then
+        stop_core
+    fi
+    cat > $HYDRAGNN_TIMING_DIR/search.json <<EOF2
+{"method": $HYDRAGNN_DDSTORE_METHOD, "tag": "${HYDRAGNN_RUN_TAG:-}", "job_id": "$SLURM_JOB_ID",
+ "trial_nodes": $NNODES, "core_nodes": $core_nodes, "nnodes_per_trial": $NNODES_PER_TRIAL,
+ "num_concurrent_trials": $NUM_CONCURRENT_TRIALS, "max_evals": ${MAX_EVALS:-$((NUM_CONCURRENT_TRIALS*2))},
+ "t_start": $t_start, "t_search_start": $t_search_start, "t_search_end": $t_search_end, "t_end": $(date +%s.%N)}
+EOF2
+}
 
-if [ "$HYDRAGNN_DDSTORE_METHOD" = "2" ]; then
-    stop_core
+if [ "$COMPARE_TIMINGS" = "1" ]; then
+    RUNS_DIR=$HYDRAGNN_ROOT/runs
+    case "$COMPARE_ORDER" in
+        plain_first) ORDER="1 2" ;;
+        ddstore_first) ORDER="2 1" ;;
+        *) echo "COMPARE_ORDER must be plain_first or ddstore_first"; exit 1 ;;
+    esac
+    step=1
+    for m in $ORDER; do
+        tag=m${m}_timing_$SLURM_JOB_ID
+        echo ""
+        echo "[$step/3] DeepHyper search, DDStore method $m ($tag)"
+        export HYDRAGNN_RUN_TAG=$tag
+        export DEEPHYPER_LOG_DIR=$RUNS_DIR/$tag/logs
+        export HYDRAGNN_DEEPHYPER_DIR=$RUNS_DIR/$tag/deephyper
+        export HYDRAGNN_TIMING_DIR=$RUNS_DIR/$tag/timings
+        run_search $m
+        step=$(( step + 1 ))
+    done
+    echo ""
+    echo "[3/3] Compare timings"
+    python $HYDRAGNN_ROOT/examples/multidataset_hpo_sc26/compare-timings.py \
+        $RUNS_DIR/m1_timing_$SLURM_JOB_ID $RUNS_DIR/m2_timing_$SLURM_JOB_ID \
+        --out $RUNS_DIR/timing_compare_$SLURM_JOB_ID | tee $RUNS_DIR/timing_compare_$SLURM_JOB_ID.txt
+else
+    export HYDRAGNN_TIMING_DIR=${HYDRAGNN_TIMING_DIR:-$DEEPHYPER_LOG_DIR/timings}
+    run_search $HYDRAGNN_DDSTORE_METHOD
 fi
 
 # (C) End of job: stop data collection

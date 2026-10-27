@@ -35,6 +35,11 @@ import time
 from mpi4py import MPI
 from contextlib import nullcontext
 
+## Per-epoch wall times (seconds) of the last train_validate_test() call:
+## one dict per epoch with "epoch", "train", "validate", "test" and "total".
+## Each phase ends in a cross-rank reduction, so no device sync is needed.
+epoch_timings = list()
+
 try:
     from torch.amp import GradScaler
 except (ImportError, ModuleNotFoundError):
@@ -336,10 +341,12 @@ def train_validate_test(
     timer.start()
 
     epoch_start = config["Training"].get("epoch_start", 0)
+    epoch_timings.clear()
     for epoch in range(epoch_start, num_epoch):
         os.environ["HYDRAGNN_EPOCH"] = str(epoch)
         ## timer per epoch
         t0 = time.time()
+        epoch_t0 = time.perf_counter()
         profiler.set_current_epoch(epoch)
         for dataloader in [train_loader, val_loader, test_loader]:
             if getattr(dataloader.sampler, "set_epoch", None) is not None:
@@ -363,6 +370,7 @@ def train_validate_test(
             tr.disable()
             if epoch == 0:
                 tr.reset()
+        train_t1 = time.perf_counter()
 
         if int(os.getenv("HYDRAGNN_VALTEST", "1")) == 0:
             continue
@@ -381,6 +389,7 @@ def train_validate_test(
             compute_grad_energy=compute_grad_energy,
             precision=precision,
         )
+        val_t1 = time.perf_counter()
         test_loss, test_taskserr, true_values, predicted_values = test(
             test_loader,
             model,
@@ -391,6 +400,7 @@ def train_validate_test(
             compute_grad_energy=compute_grad_energy,
             precision=precision,
         )
+        test_t1 = time.perf_counter()
         scheduler.step(val_loss)
         if writer is not None:
             writer.add_scalar("train error", train_loss, epoch)
@@ -415,6 +425,16 @@ def train_validate_test(
         )
         print_distributed(
             verbosity, "Tasks Test Loss:", [taskerr.item() for taskerr in test_taskserr]
+        )
+
+        epoch_timings.append(
+            {
+                "epoch": epoch,
+                "train": train_t1 - epoch_t0,
+                "validate": val_t1 - train_t1,
+                "test": test_t1 - val_t1,
+                "total": time.perf_counter() - epoch_t0,
+            }
         )
 
         total_loss_train[epoch] = train_loss

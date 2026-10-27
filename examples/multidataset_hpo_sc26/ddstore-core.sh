@@ -38,6 +38,8 @@ function stop_core() {
 
 # Core: same rank count as a trial (--num_samples is per rank), so it
 # publishes the samples a method-1 trial would load. CPU only.
+# --kill-on-bad-exit: one failed rank ends the step, so the wait for
+# "ready" below fails fast instead of hanging.
 function start_core() {
     local core_log=$DEEPHYPER_LOG_DIR/ddstore_core_$SLURM_JOB_ID.txt
     rm -rf $HYDRAGNN_DDSTORE_HANDSHAKE_DIR
@@ -46,6 +48,7 @@ function start_core() {
 
     srun -N $NNODES_PER_TRIAL -n $(( NNODES_PER_TRIAL * 8 )) -w $CORE_NODES \
         --ntasks-per-node=8 --cpus-per-task 7 --threads-per-core 1 --cpu-bind threads \
+        --kill-on-bad-exit=1 \
         -o $core_log -e $core_log \
         $VNI_WRAP python -u $HYDRAGNN_ROOT/examples/multidataset_hpo_sc26/gfm_mlip_all_mpnn.py \
         $1 --log=ddstore_core_$SLURM_JOB_ID \
