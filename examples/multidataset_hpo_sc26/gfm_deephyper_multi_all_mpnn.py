@@ -43,6 +43,15 @@ MULTI_MODEL_LIST = os.environ["MULTI_MODEL_LIST"]
 NUM_EPOCH = int(os.environ["NUM_EPOCH"])
 BATCH_SIZE = int(os.environ["BATCH_SIZE"])
 HYDRAGNN_MAX_NUM_BATCH = int(os.environ["HYDRAGNN_MAX_NUM_BATCH"])
+## DDStore method 2: trials read the data a core step holds on CORE_NODES
+## (see ddstore-core.sh); unset for method 1
+DDSTORE_HANDSHAKE_DIR = (
+    os.getenv("HYDRAGNN_DDSTORE_HANDSHAKE_DIR")
+    if os.getenv("HYDRAGNN_DDSTORE_METHOD") == "2"
+    else None
+)
+DDSTORE_CORE_NODES = [n for n in os.getenv("CORE_NODES", "").split(",") if n]
+VNI_WRAP = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vni-wrap.sh")
 
 
 def to_float(x):
@@ -79,6 +88,9 @@ def run(trial, dequed=None):
             f"--error {DEEPHYPER_LOG_DIR}/error_{SLURM_JOB_ID}_{trial.id}.txt",
         ]
     )
+    if DDSTORE_HANDSHAKE_DIR is not None:
+        ## A failed rank ends the step, so its nodes go back to the queue
+        prefix = f"{prefix} --kill-on-bad-exit=1 {VNI_WRAP}"
 
     command = " ".join(
         [
@@ -99,6 +111,11 @@ def run(trial, dequed=None):
             f"--log={log_name}",
             f"--learning_rate={trial.parameters['learning_rate']}",
         ]
+        + (
+            [f"--ddstore_handshake_dir={DDSTORE_HANDSHAKE_DIR}"]
+            if DDSTORE_HANDSHAKE_DIR is not None
+            else []
+        )
         + [
             f"--{param}={trial.parameters[param]}"
             for param in trial.parameters
@@ -269,6 +286,8 @@ if __name__ == "__main__":
 
     # Create the node queue
     queue, _ = read_node_list()
+    if DDSTORE_HANDSHAKE_DIR is not None:
+        queue = [n for n in queue if n not in DDSTORE_CORE_NODES]
     print("The queue:", queue, len(queue))
     print("NNODES_PER_TRIAL", NNODES_PER_TRIAL)
     print("NUM_CONCURRENT_TRIALS", NUM_CONCURRENT_TRIALS)

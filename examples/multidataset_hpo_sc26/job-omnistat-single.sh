@@ -173,11 +173,8 @@ export MULTI_MODEL_LIST=$datadir0,$datadir1,$datadir2,$datadir3,$datadir4,$datad
 # Configuration
 export NNODES_PER_TRIAL=2 #256
 if [ "$HYDRAGNN_DDSTORE_METHOD" = "2" ]; then
-    # The core gets the first NNODES_PER_TRIAL nodes, trials the rest
-    mapfile -t ALL_NODES < <(scontrol show hostnames "$SLURM_JOB_NODELIST")
-    CORE_NODES=$(IFS=,; echo "${ALL_NODES[*]:0:$NNODES_PER_TRIAL}")
-    TRIAL_NODES=$(IFS=,; echo "${ALL_NODES[*]:$NNODES_PER_TRIAL}")
-    export NNODES=$(( $SLURM_JOB_NUM_NODES - $NNODES_PER_TRIAL ))
+    source $HYDRAGNN_ROOT/examples/multidataset_hpo_sc26/ddstore-core.sh
+    ddstore_split_nodes
 else
     export NNODES=$SLURM_JOB_NUM_NODES # e.g., 100 total nodes
 fi
@@ -225,43 +222,7 @@ SRUN_ARGS="--ntasks-per-node=8 --cpus-per-task 7 --threads-per-core 1 --cpu-bind
 
 if [ "$HYDRAGNN_DDSTORE_METHOD" = "2" ]; then
     NTRIALS=${NTRIALS:-2}
-    HANDSHAKE_DIR=$HYDRAGNN_ROOT/ddstore_runtime/$SLURM_JOB_ID
-    CORE_LOG=$DEEPHYPER_LOG_DIR/ddstore_core_$SLURM_JOB_ID.txt
-    VNI_WRAP=$HYDRAGNN_ROOT/examples/multidataset_hpo_sc26/vni-wrap.sh
-    rm -rf $HANDSHAKE_DIR
-    mkdir -p $HANDSHAKE_DIR
-    echo "DDStore core nodes: $CORE_NODES"
-    echo "DDStore trial nodes: $TRIAL_NODES"
-    echo "DDStore handshake dir: $HANDSHAKE_DIR"
-
-    # Core: same rank count as a trial, so it publishes the samples a
-    # method-1 run of that size would load. CPU only.
-    srun -N $NNODES_PER_TRIAL -n $((NNODES_PER_TRIAL * 8)) -w $CORE_NODES $SRUN_ARGS \
-        -o $CORE_LOG -e $CORE_LOG \
-        $VNI_WRAP python -u examples/multidataset_hpo_sc26/gfm_mlip_all_mpnn.py \
-        $DATA_ARGS --log=ddstore_core_$SLURM_JOB_ID \
-        --ddstore_core --ddstore_handshake_dir=$HANDSHAKE_DIR &
-    CORE_PID=$!
-
-    # Stop the core on any exit, so a failed trial can't leave it running
-    function stop_core() {
-        touch $HANDSHAKE_DIR/stop
-        wait $CORE_PID
-        echo "DDStore core stopped."
-    }
-    trap stop_core EXIT
-
-    waited=0
-    while [ ! -f $HANDSHAKE_DIR/ready ]; do
-        if ! kill -0 $CORE_PID 2>/dev/null; then
-            echo "DDStore core exited before it was ready. Core log follows:"
-            tail -50 $CORE_LOG
-            exit 1
-        fi
-        sleep 5
-        waited=$(( waited + 5 ))
-    done
-    echo "DDStore core ready after ${waited}s."
+    start_core "$DATA_ARGS"
 
     # Trials come and go while the core holds the data
     for i in $(seq 0 $(( NTRIALS - 1 ))); do
@@ -270,9 +231,8 @@ if [ "$HYDRAGNN_DDSTORE_METHOD" = "2" ]; then
             --gpus-per-node=8 --gpus-per-task=1 --gpu-bind=closest --kill-on-bad-exit=1 \
             $VNI_WRAP python -u examples/multidataset_hpo_sc26/gfm_mlip_all_mpnn.py \
             $DATA_ARGS $TRIAL_ARGS --log=gfm_${SLURM_JOB_ID}_$i \
-            --ddstore_handshake_dir=$HANDSHAKE_DIR
+            --ddstore_handshake_dir=$HYDRAGNN_DDSTORE_HANDSHAKE_DIR
     done
-    trap - EXIT
     stop_core
 else
     cmd srun -N $NNODES -n $((NNODES * 8)) $SRUN_ARGS \

@@ -7,6 +7,9 @@
 #SBATCH -p batch
 #SBATCH -N 256
 #SBATCH -C nvme
+# DDStore method 2: the core and the trials are separate srun steps, which
+# reach each other only through the job VNI (see vni-wrap.sh).
+#SBATCH --network=single_node_vni,job_vni
 
 function cmd() {
     echo "$@"
@@ -136,10 +139,14 @@ export HYDRAGNN_MAX_NUM_BATCH=100
 export BATCH_SIZE=16 #200
 export NUM_EPOCH=20
 
-export HYDRAGNN_DDSTORE_METHOD=1
+# 2: a core srun step holds the data for the whole search and trial steps
+# read it; 1: every trial loads its own DDStore.
+export HYDRAGNN_DDSTORE_METHOD=${HYDRAGNN_DDSTORE_METHOD:-2}
+export DDSTORE_FABRIC=${DDSTORE_FABRIC:-cxi}   # native Slingshot provider (default: hsn, tcp;ofi_rxm)
 # CPU->NIC map for DDStore FABRIC_IFACE selection; computed once on the compute node
 export DDSTORE_NIC_MAP=$(python3 -m cpu_nic_map --env)
-# export DDSTORE_FABRIC=cxi   # native Slingshot provider (default: hsn, tcp;ofi_rxm)
+# Do not set FI_HMEM=system here: RCCL's OFI plugin needs libfabric's ROCr
+# HMEM support for GPU buffers (job 5776561 failed in NET/OFI with it).
 export HYDRAGNN_CUSTOM_DATALOADER=1
 export HYDRAGNN_NUM_WORKERS=2
 
@@ -165,8 +172,13 @@ export datadir15=transition1x
 export MULTI_MODEL_LIST=$datadir0
 
 # Configuration
-export NNODES=$SLURM_JOB_NUM_NODES # e.g., 100 total nodes
 export NNODES_PER_TRIAL=2 #256
+if [ "$HYDRAGNN_DDSTORE_METHOD" = "2" ]; then
+    source $HYDRAGNN_ROOT/examples/multidataset_hpo_sc26/ddstore-core.sh
+    ddstore_split_nodes
+else
+    export NNODES=$SLURM_JOB_NUM_NODES # e.g., 100 total nodes
+fi
 export NUM_CONCURRENT_TRIALS=$(( $NNODES / $NNODES_PER_TRIAL ))
 export NTOTGPUS=$(( $NNODES * 8 )) # e.g., 800 total GPUs
 export NGPUS_PER_TRIAL=$(( 8 * $NNODES_PER_TRIAL )) # e.g., 32 GPUs per training
@@ -190,8 +202,20 @@ ${OMNISTAT_WRAPPER} usermode --start --interval 15
 # [ -z $MPNN_TYPE ] && MPNN_TYPE=EGNN,SchNet,DimeNet,MACE,PAINN,PNAEq
 [ -z $MPNN_TYPE ] && MPNN_TYPE=SchNet
 
+if [ "$HYDRAGNN_DDSTORE_METHOD" = "2" ]; then
+    # Same data options as the trials (gfm_deephyper_multi_all_mpnn.py run())
+    start_core "--inputfile=gfm_mlip.json --multi --ddstore --precision=fp64 \
+        --multi_model_list=$MULTI_MODEL_LIST --batch_size=$BATCH_SIZE \
+        --num_samples=$(( BATCH_SIZE * HYDRAGNN_MAX_NUM_BATCH )) --oversampling \
+        --oversampling_num_samples=$(( BATCH_SIZE * HYDRAGNN_MAX_NUM_BATCH ))"
+fi
+
 cmd python -u $HYDRAGNN_ROOT/examples/multidataset_hpo_sc26/gfm_deephyper_multi_all_mpnn.py \
     --mpnn_type=$MPNN_TYPE --max_evals=$((NUM_CONCURRENT_TRIALS*2))
+
+if [ "$HYDRAGNN_DDSTORE_METHOD" = "2" ]; then
+    stop_core
+fi
 
 # (C) End of job: stop data collection
 ${OMNISTAT_WRAPPER} usermode --stop
