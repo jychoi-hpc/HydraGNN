@@ -96,25 +96,8 @@ class DistDataset(AbstractBaseDataset):
         ## FIXME
         ddstore_method = int(os.getenv("HYDRAGNN_DDSTORE_METHOD", "0"))
         print("DDStore method:", ddstore_method)
-        if ddstore_method == 1:
-            # Using libfabric. Need a map each rank to a network interface
-            iface = system = os.getenv("FABRIC_IFACE", None)
-            if iface is None:
-                system = os.getenv("LMOD_SYSTEM_NAME", None)
-                if system is None and os.getenv("PBS_O_HOST", "none")[:6] == "aurora":
-                    system = "aurora"
-
-                if system == "frontier":
-                    gpu_id = int(os.getenv("SLURM_LOCALID", "0"))
-                    os.environ["FABRIC_IFACE"] = f"hsn{gpu_id//2}"
-                elif system == "perlmutter":
-                    gpu_id = int(os.getenv("SLURM_LOCALID", "0"))
-                    os.environ["FABRIC_IFACE"] = f"hsn{gpu_id}"
-                elif system == "aurora":
-                    gpu_id = int(os.getenv("PALS_LOCAL_RANKID", "0"))
-                    os.environ["FABRIC_IFACE"] = f"hsn{gpu_id//2}"
-
-            print("FABRIC_IFACE:", os.environ["FABRIC_IFACE"])
+        # For method 1/2, PyDDStore selects FABRIC_IFACE itself from the rank's
+        # CPU affinity (or DDSTORE_NIC_MAP). Set FABRIC_IFACE to override.
 
         self.ddstore_comm = self.comm.Split(self.rank // self.ddstore_width, self.rank)
         self.ddstore_comm_rank = self.ddstore_comm.Get_rank()
