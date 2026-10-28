@@ -21,6 +21,7 @@ import re
 import argparse
 import time
 import glob
+import threading
 
 pd.options.display.max_columns = None
 pd.options.display.max_rows = None
@@ -34,6 +35,8 @@ NGPUS_PER_TRIAL = int(os.environ["NGPUS_PER_TRIAL"])
 NUM_CONCURRENT_TRIALS = int(os.environ["NUM_CONCURRENT_TRIALS"])
 NTOT_DEEPHYPER_RANKS = int(os.environ["NTOT_DEEPHYPER_RANKS"])
 OMP_NUM_THREADS = int(os.environ["OMP_NUM_THREADS"])
+GPUS_PER_NODE = int(os.getenv("GPUS_PER_NODE", "8"))
+HYDRAGNN_SYSTEM = os.getenv("HYDRAGNN_SYSTEM", "frontier")
 DEEPHYPER_LOG_DIR = os.environ["DEEPHYPER_LOG_DIR"]
 SLURM_JOB_ID = os.environ["SLURM_JOB_ID"]
 OMNISTAT_DIR = os.getenv("OMNISTAT_DIR", None)
@@ -50,12 +53,60 @@ DDSTORE_HANDSHAKE_DIR = (
     if os.getenv("HYDRAGNN_DDSTORE_METHOD") == "2"
     else None
 )
+DDSTORE_GROUP_MAP_FILE = os.getenv("DDSTORE_GROUP_MAP_FILE")
 ## Nodes kept for the DDStore core (ddstore-core.sh); also left out of the
 ## queue by a method-1 search in the same job (COMPARE_TIMINGS=1)
 DDSTORE_CORE_NODES = [n for n in os.getenv("CORE_NODES", "").split(",") if n]
 ## Separates the searches of one job (COMPARE_TIMINGS=1)
 RUN_TAG = os.getenv("HYDRAGNN_RUN_TAG")
 VNI_WRAP = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vni-wrap.sh")
+
+
+def report_trial_progress(stop_event, interval=5):
+    """Summarize trial logs on the controller without streaming every rank's output."""
+    offsets = {}
+    active = set()
+    last_heartbeat = time.monotonic()
+
+    def scan_logs():
+        for path in sorted(glob.glob(os.path.join(DEEPHYPER_LOG_DIR, "output-*.txt"))):
+            trial_id = os.path.basename(path)[len("output-") : -len(".txt")]
+            try:
+                with open(path) as log:
+                    log.seek(offsets.get(path, 0))
+                    lines = log.readlines()
+                    offsets[path] = log.tell()
+            except OSError:
+                continue
+            for line in lines:
+                if line.startswith("Command = "):
+                    active.add(trial_id)
+                    print(f"[DeepHyper] Trial {trial_id} started; logs: {DEEPHYPER_LOG_DIR}", flush=True)
+                elif line.startswith("Output:"):
+                    active.discard(trial_id)
+                    print(f"[DeepHyper] Trial {trial_id} finished: {line.strip()}", flush=True)
+
+            error_path = os.path.join(DEEPHYPER_LOG_DIR, f"error_{SLURM_JOB_ID}_{trial_id}.txt")
+            if os.path.exists(error_path):
+                try:
+                    with open(error_path) as log:
+                        log.seek(offsets.get(error_path, 0))
+                        lines = log.readlines()
+                        offsets[error_path] = log.tell()
+                except OSError:
+                    continue
+                for line in lines:
+                    if "Epoch:" in line or "Data loading time (sec):" in line:
+                        print(f"[DeepHyper] Trial {trial_id}: {line.strip()}", flush=True)
+
+    while True:
+        scan_logs()
+        if active and time.monotonic() - last_heartbeat >= 30:
+            print(f"[DeepHyper] Waiting on trial(s): {', '.join(sorted(active))}", flush=True)
+            last_heartbeat = time.monotonic()
+        if stop_event.wait(interval):
+            break
+    scan_logs()
 
 
 def to_float(x):
@@ -78,29 +129,55 @@ def run(trial, dequed=None):
     log_name = f"gfm_{SLURM_JOB_ID}_{trial.id}"
     if RUN_TAG is not None:
         log_name = f"gfm_{SLURM_JOB_ID}_{RUN_TAG}_{trial.id}"
-    master_addr = f"HYDRAGNN_MASTER_ADDR={dequed[0]}"
-    nodelist = ",".join(dequed)
+    # In grouped method 2, the queue holds whole node groups as one resource.
+    trial_nodes = dequed[0] if DDSTORE_GROUP_MAP_FILE is not None else dequed
+    master_addr = f"HYDRAGNN_MASTER_ADDR={trial_nodes[0]}"
+    nodelist = ",".join(trial_nodes)
+    handshake_dir = DDSTORE_HANDSHAKE_DIR
+    if DDSTORE_GROUP_MAP_FILE is not None:
+        with open(DDSTORE_GROUP_MAP_FILE) as group_map:
+            groups = {
+                frozenset(nodes.split(",")): path
+                for nodes, path in (line.rstrip("\n").split("\t", 1) for line in group_map)
+            }
+        handshake_dir = groups.get(frozenset(trial_nodes))
+        if handshake_dir is None:
+            raise ValueError(f"No DDStore core group for trial nodes {nodelist}")
+        print(f"Trial {trial.id}: nodes {nodelist} -> DDStore {handshake_dir}", flush=True, file=f)
 
     prefix = " ".join(
         [
             f"srun",
             f"-N {NNODES_PER_TRIAL} -n {NGPUS_PER_TRIAL}",
-            f"--ntasks-per-node=8 --gpus-per-node=8",
-            f"--cpus-per-task {OMP_NUM_THREADS} --threads-per-core 1 --cpu-bind threads",
-            f"--gpus-per-task=1 --gpu-bind=closest",
+            f"--ntasks-per-node={GPUS_PER_NODE}"
+            + ("" if HYDRAGNN_SYSTEM == "perlmutter" else f" --gpus-per-node={GPUS_PER_NODE}"),
+            f"--cpus-per-task {OMP_NUM_THREADS} --threads-per-core 1 --cpu-bind {'cores' if HYDRAGNN_SYSTEM == 'perlmutter' else 'threads'}",
+            f"--gpus-per-task=1 --gpu-bind={'none' if HYDRAGNN_SYSTEM == 'perlmutter' else 'closest'}",
             f"--export=ALL,{master_addr}",
             f"--nodelist={nodelist}",
             f"--output {DEEPHYPER_LOG_DIR}/output_{SLURM_JOB_ID}_{trial.id}.txt",
             f"--error {DEEPHYPER_LOG_DIR}/error_{SLURM_JOB_ID}_{trial.id}.txt",
+            "--kill-on-bad-exit=1",
+            *(
+                ["--exact"]
+                if HYDRAGNN_SYSTEM == "perlmutter"
+                and DDSTORE_HANDSHAKE_DIR is not None
+                and os.getenv("DDSTORE_COLOCATE") == "1"
+                else []
+            ),
         ]
     )
-    if DDSTORE_HANDSHAKE_DIR is not None:
-        ## A failed rank ends the step, so its nodes go back to the queue
-        prefix = f"{prefix} --kill-on-bad-exit=1 {VNI_WRAP}"
+    if DDSTORE_HANDSHAKE_DIR is not None or HYDRAGNN_SYSTEM == "perlmutter":
+        prefix = f"{prefix} {VNI_WRAP}"
 
     ## Launch time and trial id for the trial's timing JSON (HYDRAGNN_TIMING_DIR)
     prefix = (
         f"export TRIAL_LAUNCH_TIME=$(date +%s.%N) HYDRAGNN_TRIAL_ID={trial.id}; {prefix}"
+    )
+    inputfile = (
+        os.path.join(os.path.dirname(__file__), "gfm_mlip.json")
+        if HYDRAGNN_SYSTEM == "perlmutter"
+        else "gfm_mlip.json"
     )
     command = " ".join(
         [
@@ -108,7 +185,7 @@ def run(trial, dequed=None):
             python_exe,
             "-u",
             python_script,
-            f"--inputfile=gfm_mlip.json",
+            f"--inputfile={inputfile}",
             f"--multi",
             f"--ddstore",
             f"--precision=fp64",
@@ -119,11 +196,10 @@ def run(trial, dequed=None):
             f"--oversampling",
             f"--oversampling_num_samples={BATCH_SIZE*HYDRAGNN_MAX_NUM_BATCH}",
             f"--log={log_name}",
-            f"--learning_rate={trial.parameters['learning_rate']}",
         ]
         + (
-            [f"--ddstore_handshake_dir={DDSTORE_HANDSHAKE_DIR}"]
-            if DDSTORE_HANDSHAKE_DIR is not None
+            [f"--ddstore_handshake_dir={handshake_dir}"]
+            if handshake_dir is not None
             else []
         )
         + [
@@ -298,7 +374,25 @@ if __name__ == "__main__":
 
     # Create the node queue
     queue, _ = read_node_list()
-    queue = [n for n in queue if n not in DDSTORE_CORE_NODES]
+    queue_pop_per_task = NNODES_PER_TRIAL
+    if DDSTORE_GROUP_MAP_FILE is not None:
+        with open(DDSTORE_GROUP_MAP_FILE) as group_map:
+            queue = [
+                tuple(nodes.split(","))
+                for nodes, _ in (
+                    line.rstrip("\n").split("\t", 1) for line in group_map
+                )
+            ]
+        if (
+            len(queue) != NUM_CONCURRENT_TRIALS
+            or any(len(group) != NNODES_PER_TRIAL for group in queue)
+            or sorted(node for group in queue for node in group)
+            != sorted(read_node_list()[0])
+        ):
+            raise ValueError("DDStore groups must partition the allocated trial nodes")
+        queue_pop_per_task = 1
+    elif os.getenv("DDSTORE_COLOCATE") != "1":
+        queue = [n for n in queue if n not in DDSTORE_CORE_NODES]
     print("The queue:", queue, len(queue))
     print("NNODES_PER_TRIAL", NNODES_PER_TRIAL)
     print("NUM_CONCURRENT_TRIALS", NUM_CONCURRENT_TRIALS)
@@ -310,7 +404,7 @@ if __name__ == "__main__":
         run,
         num_workers=NUM_CONCURRENT_TRIALS,
         queue=queue,
-        queue_pop_per_task=NNODES_PER_TRIAL,
+        queue_pop_per_task=queue_pop_per_task,
     )
 
     search = CBO(
@@ -373,7 +467,20 @@ if __name__ == "__main__":
             print("Error in loading preloaded results:", excp)
 
     timeout = None
-    results = search.search(evaluator, max_evals=args.max_evals, timeout=timeout)
+    stop_progress = threading.Event()
+    progress_thread = None
+    if HYDRAGNN_SYSTEM == "perlmutter":
+        print(f"[DeepHyper] Starting {args.max_evals} evaluations; trial logs: {DEEPHYPER_LOG_DIR}", flush=True)
+        progress_thread = threading.Thread(
+            target=report_trial_progress, args=(stop_progress,), daemon=True
+        )
+        progress_thread.start()
+    try:
+        results = search.search(evaluator, max_evals=args.max_evals, timeout=timeout)
+    finally:
+        if progress_thread is not None:
+            stop_progress.set()
+            progress_thread.join()
     print(results)
 
     sys.exit(0)

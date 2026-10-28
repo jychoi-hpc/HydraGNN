@@ -31,16 +31,9 @@ def read_node_list():
                 nodes.append(f"frontier{subset}")
         nodes_string = ",".join(nodes)
     elif system == "perlmutter":
-        node_subsets = node_list[4:-1].split(",")
-        for subset in node_subsets:
-            if "-" in subset:
-                start, end = subset.split("-")
-                start, end = int(start), int(end)
-                for i in range(start, end + 1):
-                    leading_zeros = "".join(["0"] * (6 - len(str(i))))
-                    nodes.append(f"nid{leading_zeros}{i}")
-            else:
-                nodes.append(f"nid{subset}")
+        nodes = subprocess.check_output(
+            ["scontrol", "show", "hostnames", node_list], text=True
+        ).splitlines()
         nodes_string = ",".join(nodes)
     return nodes, nodes_string
 

@@ -6,4 +6,8 @@
 # first entry, so keep the job VNI (last entry) to let separate steps (DDStore
 # core and trials) reach each other. See DDStore docs/hpc.md.
 export SLINGSHOT_VNIS="${SLINGSHOT_VNIS##*,}"
+if [[ "${HYDRAGNN_SYSTEM:-}" == "perlmutter" ]]; then
+    export TRITON_CACHE_DIR="/tmp/triton-${SLURM_JOB_ID}-${SLURM_PROCID}"
+    mkdir -p "${TRITON_CACHE_DIR}"
+fi
 exec "$@"

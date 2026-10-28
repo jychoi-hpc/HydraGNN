@@ -1,13 +1,13 @@
 #!/usr/bin/env python
 """Compare the timings of a DDStore method-1 and a method-2 DeepHyper search.
 
-Each run directory (job-omnistat-deephyper.sh with COMPARE_TIMINGS=1) holds
+Each run directory (a DeepHyper job with COMPARE_TIMINGS=1) holds
   deephyper/results.csv     DeepHyper results (hyperparameters, objective,
                             m:trial_start / m:trial_end)
   timings/timings_*.json    one per trial (gfm_mlip_all_mpnn.py), each stage
                             as mean/min/max across the trial's ranks
   timings/search.json       search start/end times and node counts
-  timings/core_timing.json  method 2 only: the DDStore core's load
+  timings/core_timing*.json method 2 only: DDStore core load (one per group)
 
 Trials are compared only when their hyperparameters are identical in both
 runs. Stage tables report the mean over matched trials of the rank mean and
@@ -20,6 +20,7 @@ import argparse
 import csv
 import glob
 import json
+import math
 import os
 
 import numpy as np
@@ -69,7 +70,8 @@ def trial_key(row):
 def load_run(path):
     with open(os.path.join(path, "timings", "search.json")) as f:
         search = json.load(f)
-    rows = list(csv.DictReader(open(os.path.join(path, "deephyper", "results.csv"))))
+    with open(os.path.join(path, "deephyper", "results.csv")) as f:
+        rows = list(csv.DictReader(f))
     timings = dict()
     for fname in glob.glob(os.path.join(path, "timings", "timings_*.json")):
         with open(fname) as f:
@@ -86,19 +88,27 @@ def load_run(path):
             }
         wall = float(row["m:trial_end"]) - float(row["m:trial_start"])
         stages["trial_wall"] = (wall, wall)
+        try:
+            objective = float(row["objective"])
+        except ValueError:
+            objective = float("nan")
+        successful = row["job_status"] == "DONE" and math.isfinite(objective) and payload is not None
         trials[trial_key(row)] = {
             "job_id": row["job_id"],
             "objective": row["objective"],
             "trial_end": float(row["m:trial_end"]),
             "has_timing": payload is not None,
+            "successful": successful,
             "stages": stages,
         }
-    core = None
-    core_path = os.path.join(path, "timings", "core_timing.json")
-    if os.path.exists(core_path):
+    cores = []
+    core_paths = sorted(glob.glob(os.path.join(path, "timings", "core_timing_group-*.json")))
+    if not core_paths:
+        core_paths = glob.glob(os.path.join(path, "timings", "core_timing.json"))
+    for core_path in core_paths:
         with open(core_path) as f:
-            core = json.load(f)
-    return {"path": path, "search": search, "trials": trials, "core": core}
+            cores.append(json.load(f))
+    return {"path": path, "search": search, "trials": trials, "cores": cores}
 
 
 def ordered(keys):
@@ -108,9 +118,12 @@ def ordered(keys):
 
 def search_summary(run, n_results):
     s = run["search"]
-    ends = sorted(t["trial_end"] - s["t_search_start"] for t in run["trials"].values())
+    ends = sorted(
+        t["trial_end"] - s["t_search_start"]
+        for t in run["trials"].values() if t["successful"]
+    )
     job = s["t_end"] - s["t_start"]
-    nodes = s["trial_nodes"] + s["core_nodes"]
+    nodes = s.get("allocated_nodes", s["trial_nodes"] + s["core_nodes"])
     out = {
         "trial_nodes": s["trial_nodes"],
         "core_nodes": s["core_nodes"],
@@ -118,9 +131,9 @@ def search_summary(run, n_results):
         "search_span": s["t_search_end"] - s["t_search_start"],
         "run_span": job,
         "trials_completed": len(ends),
-        "trials_per_hour": 3600.0 * len(ends) / job,
+        "trials_per_hour": 3600.0 * len(ends) / job if ends else None,
         "node_hours": nodes * job / 3600.0,
-        "node_hours_per_trial": nodes * job / 3600.0 / max(len(ends), 1),
+        "node_hours_per_trial": nodes * job / 3600.0 / len(ends) if ends else None,
     }
     ## Time (from the search start) until the k-th result, k = n/4 .. n
     for q in [0.25, 0.5, 0.75, 1.0]:
@@ -147,8 +160,8 @@ def main():
         k
         for k in m1["trials"]
         if k in m2["trials"]
-        and m1["trials"][k]["has_timing"]
-        and m2["trials"][k]["has_timing"]
+        and m1["trials"][k]["successful"]
+        and m2["trials"][k]["successful"]
     ]
     matched.sort(key=lambda k: int(m1["trials"][k]["job_id"]))
 
@@ -156,8 +169,11 @@ def main():
         n = len(run["trials"])
         nt = sum(t["has_timing"] for t in run["trials"].values())
         print(f"{name}: {run['path']}")
-        print(f"  trials: {n}, with timing JSON: {nt}")
+        completed = sum(t["successful"] for t in run["trials"].values())
+        print(f"  trials: {n}, with timing JSON: {nt}, successful: {completed}")
     print(f"Matched trials (identical hyperparameters): {len(matched)}")
+    if not matched:
+        print("No matched successful trials; per-trial speedup is unavailable.")
     print()
 
     ## Per-stage table over matched trials
@@ -196,21 +212,28 @@ def main():
     print()
 
     ## Per-search table
-    n_results = min(len(m1["trials"]), len(m2["trials"]))
+    n_results = min(
+        sum(t["successful"] for t in m1["trials"].values()),
+        sum(t["successful"] for t in m2["trials"].values()),
+    )
     s1, s2 = search_summary(m1, n_results), search_summary(m2, n_results)
-    print("Per search (node-hours count the core's nodes and its start-up)")
+    print("Per search (node-hours use allocated nodes and include core start-up)")
     print(f"{'metric':<28} {'method 1':>12} {'method 2':>12} {'m1/m2':>8}")
     print("-" * 64)
     for key in s1:
         a, b = s1[key], s2[key]
-        ratio = a / b if a is not None and b else None
+        ratio = a / b if n_results and a is not None and b else None
         print(f"{key:<28} {fmt(a)} {fmt(b)} {fmt(ratio, 8, 2)}")
+    if not n_results:
+        print("No successful trials in both methods; throughput and speedup cannot be compared.")
     print()
 
-    if m2["core"] is not None:
-        print("DDStore core (method 2), mean / max across core ranks")
-        for key, v in sorted(m2["core"]["timings_seconds"].items()):
-            print(f"  {key:<26} {v['mean']:10.3f} {v['max']:10.3f}")
+    if m2["cores"]:
+        print("DDStore cores (method 2), mean / max across ranks per group")
+        for i, core in enumerate(m2["cores"]):
+            print(f"  Group {i}:")
+            for key, v in sorted(core["timings_seconds"].items()):
+                print(f"    {key:<26} {v['mean']:10.3f} {v['max']:10.3f}")
         print()
 
     if args.out:
@@ -231,7 +254,7 @@ def main():
             "matched_trials": len(matched),
             "stages": stages,
             "search": {"m1": s1, "m2": s2},
-            "core": m2["core"]["timings_seconds"] if m2["core"] else None,
+            "cores": [core["timings_seconds"] for core in m2["cores"]],
         }
         with open(args.out + ".json", "w") as f:
             json.dump(summary, f, indent=2)
